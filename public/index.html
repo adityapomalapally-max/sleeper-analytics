@@ -68,6 +68,8 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 .tab.whatif.on{color:var(--cyan);border-bottom-color:var(--cyan);background:rgba(6,182,212,.06)}
 .tab.recap{color:var(--pink)}
 .tab.recap.on{color:var(--pink);border-bottom-color:var(--pink);background:rgba(236,72,153,.06)}
+.tab.trade{color:var(--yellow)}
+.tab.trade.on{color:var(--yellow);border-bottom-color:var(--yellow);background:rgba(234,179,8,.06)}
 
 .spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
 .spinner-sm{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--purple);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
@@ -305,6 +307,7 @@ const TABS=[
   {id:'luck',label:'Luck Index'},
   {id:'matchups',label:'Matchups'},
   {id:'h2h',label:'Head-to-Head'},
+  {id:'trade',label:'⚖️ Trade',cls:'trade'},
   {id:'myteam',label:'🏠 My Team',cls:'myteam'},
   {id:'recap',label:'🎬 Recap',cls:'recap'},
   {id:'whatif',label:'🔮 What-If',cls:'whatif'},
@@ -745,7 +748,7 @@ async function analyze(){
     setProgress(80);setStatus('Building season data...');
     const sd=buildSeasonData(league,rosters,users,nflState,weekData);
     setProgress(100);
-    G.seasons=[sd];G.currentSeasonIdx=0;G.allTimeData=null;G.historyLoaded=false;G.historyLoading=false;G.transactionCache={};G._chatHistory=[];G._myTeamSubTab='overview';
+    G.seasons=[sd];G.currentSeasonIdx=0;G.allTimeData=null;G.historyLoaded=false;G.historyLoading=false;G.transactionCache={};G._chatHistory=[];G._myTeamSubTab='overview';G._tradeState=null;
     saveLeague(league.league_id,league.name,league.season,league.total_rosters||rosters.length);
     renderHeader();renderTicker();renderSeasonBar();buildTabs();
     $('loading').style.display='none';$('dashboard').style.display='block';$('season-bar').style.display='flex';
@@ -804,7 +807,7 @@ function setTab(name){
 function renderTab(name){
   const c=$('tab-content');c.innerHTML='';
   const s=G.seasons[G.currentSeasonIdx];
-  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
+  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
   if(fn[name])c.appendChild(fn[name](s));
 }
 
@@ -834,7 +837,7 @@ function renderTicker(){
   tw.style.display='block';
 }
 function resetApp(){
-  G={seasons:[],currentSeasonIdx:0,allTimeData:null,historyLoaded:false,historyLoading:false,nflState:null,playerDB:G.playerDB,playerDBLoading:G.playerDBLoading,playerDBLoaded:G.playerDBLoaded,transactionCache:{},leagueSettings:null,selectedTeamRosterId:null,rawRosters:{},trendingAdd:null,trendingDrop:null,_myTeamSubTab:'overview',_chatHistory:[]};
+  G={seasons:[],currentSeasonIdx:0,allTimeData:null,historyLoaded:false,historyLoading:false,nflState:null,playerDB:G.playerDB,playerDBLoading:G.playerDBLoading,playerDBLoaded:G.playerDBLoaded,transactionCache:{},leagueSettings:null,selectedTeamRosterId:null,rawRosters:{},trendingAdd:null,trendingDrop:null,_myTeamSubTab:'overview',_chatHistory:[],_tradeState:null};
   $('header-right').innerHTML='';$('ticker-wrap').style.display='none';$('ticker-content').innerHTML='';
   $('dashboard').style.display='none';$('season-bar').style.display='none';$('landing').style.display='block';$('analyze-btn').disabled=false;$('error-box').style.display='none';
 }
@@ -1836,6 +1839,310 @@ function getInjuryBadge(pid){
 
 function getPlayerImgUrl(pid){
   return'https://sleepercdn.com/content/nfl/players/thumb/'+pid+'.jpg';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TRADE CALCULATOR — Keeper league valuations with context-aware verdicts
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderTrade(s){
+  const wrap=el('div');
+
+  if(!G.playerDBLoaded){
+    wrap.appendChild(loadingEl('LOADING PLAYER DATABASE','var(--yellow)'));
+    ensurePlayerDB().then(()=>{renderTab('trade');});
+    return wrap;
+  }
+
+  // Initialize trade state
+  if(!G._tradeState){
+    G._tradeState={teamA:0,teamB:Math.min(1,s.teams.length-1),playersA:new Set(),playersB:new Set(),picksA:[],picksB:[]};
+  }
+  const ts=G._tradeState;
+
+  // Hero
+  const hero=el('div',{class:'card',style:{background:'linear-gradient(135deg,rgba(234,179,8,.1),rgba(249,115,22,.08))',border:'1px solid rgba(234,179,8,.25)',borderRadius:'16px',padding:'28px',marginBottom:'24px',textAlign:'center'}});
+  hero.appendChild(el('div',{class:'bb',style:{fontSize:'2.2rem',letterSpacing:'3px',color:'var(--yellow)'}},'⚖️ TRADE CALCULATOR'));
+  hero.appendChild(el('div',{class:'mn',style:{fontSize:'.72rem',color:'var(--muted)',marginTop:'8px'}},'Keeper league valuations · 6 keepers · Max 2 QB · 14-round draft'));
+  wrap.appendChild(hero);
+
+  // Use latest season with player data
+  let ls=G.seasons[0];
+  for(let i=0;i<G.seasons.length;i++){
+    const hasData=Object.values(G.seasons[i].matchupsByWeek).some(wm=>wm.some(m=>m.players_points&&Object.keys(m.players_points).length>0));
+    if(hasData){ls=G.seasons[i];break;}
+  }
+
+  // Compute player values for a team (end-of-season roster only)
+  function getTeamPlayerValues(team){
+    const rosterSet=new Set((team.players||[]).map(String));
+    const pm={};
+    Object.keys(ls.matchupsByWeek).map(Number).filter(w=>w<=17).forEach(w=>{
+      const wm=ls.matchupsByWeek[w]||[];
+      const en=wm.find(m=>m.roster_id===team.rosterId);
+      if(!en||!en.players_points)return;
+      Object.entries(en.players_points).forEach(([pid,pts])=>{
+        if(!rosterSet.has(String(pid)))return;
+        if(!pm[pid])pm[pid]={id:pid,tot:0,gp:0};
+        if(typeof pts==='number'&&pts>0){pm[pid].tot+=pts;pm[pid].gp++;}
+      });
+    });
+    return Object.values(pm).map(p=>{
+      const db=G.playerDB[p.id];
+      if(!db)return null;
+      const pos=db.pos;
+      if(!pos||!['QB','RB','WR','TE'].includes(pos))return null;
+      const ppg=p.gp>0?p.tot/p.gp:0;
+      if(ppg<=0)return null;
+      const raw=computeKTCValue(p.id,ppg);
+      const posW={QB:1.30,RB:1.10,WR:1.00,TE:0.90};
+      const val=Math.round(raw*(posW[pos]||1));
+      const rental=Math.round(val*0.4);
+      return{id:p.id,pos,ppg,age:db.age,keeperVal:val,rentalVal:rental,nm:pName(p.id),full:pFull(p.id)};
+    }).filter(Boolean).sort((a,b)=>b.keeperVal-a.keeperVal);
+  }
+
+  // Cache all team values
+  const teamVals={};
+  ls.teams.forEach(t=>{teamVals[t.rosterId]=getTeamPlayerValues(t);});
+
+  // Draft pick value curve (14-round, 10-team keeper league)
+  const PICK_VALUES=[0,2200,1800,1400,1100,850,600,400,250,150,100,60,40,25,15];
+  function pickValue(rd){return PICK_VALUES[rd]||0;}
+
+  // Check if player would be keeper-worthy on receiving team after trade
+  function isKeeperWorthy(playerId,recvRosterId,tradedAwayIds,incomingPlayers){
+    const current=teamVals[recvRosterId]||[];
+    const remaining=current.filter(p=>!tradedAwayIds.has(p.id));
+    const combined=[...remaining,...incomingPlayers];
+    const qbC={n:0};
+    const sorted=[...combined].sort((a,b)=>b.keeperVal-a.keeperVal);
+    const capped=sorted.filter(p=>{
+      if(p.pos==='QB'){if(qbC.n>=2)return false;qbC.n++;}
+      return true;
+    });
+    return capped.slice(0,6).some(p=>p.id===playerId);
+  }
+
+  const teamA=ls.teams[ts.teamA];
+  const teamB=ls.teams[ts.teamB];
+  const pvA=teamVals[teamA.rosterId]||[];
+  const pvB=teamVals[teamB.rosterId]||[];
+
+  // Build one side of the trade
+  function buildSide(label,teamIdx,playerValues,selectedIds,picks,sideKey,color){
+    const side=el('div',{style:{flex:'1',minWidth:'0'}});
+
+    // Team selector
+    const sel=el('select',{class:'team-select',style:{width:'100%',marginBottom:'14px'}});
+    ls.teams.forEach((t,i)=>{
+      const opt=el('option',{value:String(i)},t.name);
+      if(i===teamIdx)opt.selected=true;
+      sel.appendChild(opt);
+    });
+    sel.onchange=()=>{
+      ts[sideKey==='A'?'teamA':'teamB']=parseInt(sel.value);
+      ts[sideKey==='A'?'playersA':'playersB']=new Set();
+      ts[sideKey==='A'?'picksA':'picksB']=[];
+      renderTab('trade');
+    };
+    side.appendChild(sel);
+
+    side.appendChild(el('div',{class:'mn',style:{fontSize:'.65rem',color:color,letterSpacing:'2px',marginBottom:'10px'}},label+' GIVES'));
+
+    // Player roster
+    const roster=el('div',{style:{display:'flex',flexDirection:'column',gap:'5px',maxHeight:'380px',overflowY:'auto',paddingRight:'4px'}});
+    playerValues.forEach((p,i)=>{
+      const selected=selectedIds.has(p.id);
+      const isTop6=i<6;
+      const card=el('div',{style:{
+        display:'flex',alignItems:'center',gap:'8px',padding:'8px 10px',
+        background:selected?'rgba(234,179,8,.1)':'var(--surface)',
+        border:'1px solid '+(selected?'rgba(234,179,8,.4)':'var(--border)'),
+        borderRadius:'8px',cursor:'pointer',transition:'all .2s',
+        borderLeft:isTop6?'3px solid var(--yellow)':'3px solid transparent'
+      }});
+      card.onmouseover=()=>{if(!selected)card.style.borderColor='rgba(234,179,8,.2)';};
+      card.onmouseout=()=>{if(!selected)card.style.borderColor=selected?'rgba(234,179,8,.4)':'var(--border)';};
+      card.onclick=()=>{
+        if(selected)selectedIds.delete(p.id);else selectedIds.add(p.id);
+        renderTab('trade');
+      };
+      card.appendChild(el('span',{class:'player-pos '+posClass(p.pos),style:{fontSize:'.48rem'}},p.pos));
+      const info=el('div',{style:{flex:'1',minWidth:'0'}});
+      info.appendChild(el('div',{style:{fontWeight:'500',fontSize:'.78rem',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},p.nm));
+      const meta=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginTop:'1px'}});
+      if(p.age){
+        const ac=p.age<=24?'var(--green)':p.age<=27?'var(--accent)':p.age<=29?'var(--yellow)':'var(--red)';
+        meta.appendChild(el('span',{class:'mn',style:{fontSize:'.5rem',color:ac}},p.age+'y'));
+      }
+      meta.appendChild(el('span',{class:'mn',style:{fontSize:'.5rem',color:'var(--muted)'}},fmt(p.ppg,1)+'/g'));
+      info.appendChild(meta);
+      card.appendChild(info);
+      card.appendChild(el('span',{class:'bb',style:{fontSize:'.85rem',color:selected?'var(--yellow)':'var(--accent)'}},fmt(p.keeperVal,0)));
+      if(isTop6)card.appendChild(el('span',{class:'mn',style:{fontSize:'.42rem',background:'rgba(234,179,8,.12)',color:'var(--yellow)',padding:'2px 5px',borderRadius:'3px',fontWeight:'600'}},'K'));
+      roster.appendChild(card);
+    });
+    side.appendChild(roster);
+
+    // Draft picks
+    const pickSec=el('div',{style:{marginTop:'12px'}});
+    pickSec.appendChild(el('div',{class:'mn',style:{fontSize:'.58rem',color:'var(--muted)',letterSpacing:'1px',marginBottom:'6px'}},'DRAFT PICKS'));
+    if(picks.length){
+      const chips=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'5px',marginBottom:'8px'}});
+      picks.forEach((pk,pi)=>{
+        const chip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'5px',background:'rgba(234,179,8,.08)',border:'1px solid rgba(234,179,8,.25)',borderRadius:'6px',padding:'4px 8px',fontSize:'.7rem',cursor:'pointer'}});
+        chip.appendChild(el('span',{style:{fontWeight:'600',color:'var(--yellow)'}},'Rd '+pk.round));
+        chip.appendChild(el('span',{class:'mn',style:{fontSize:'.5rem',color:'var(--muted)'}},fmt(pickValue(pk.round),0)));
+        chip.appendChild(el('span',{style:{color:'var(--red)',fontWeight:'700',fontSize:'.65rem'}},'✕'));
+        chip.onclick=()=>{picks.splice(pi,1);renderTab('trade');};
+        chips.appendChild(chip);
+      });
+      pickSec.appendChild(chips);
+    }
+    const addRow=el('div',{style:{display:'flex',gap:'6px'}});
+    const pickSel=el('select',{class:'team-select',style:{flex:'1',fontSize:'.72rem',padding:'7px 10px'}});
+    pickSel.appendChild(el('option',{value:''},'Add pick...'));
+    for(let r=1;r<=14;r++)pickSel.appendChild(el('option',{value:String(r)},'Round '+r+' ('+fmt(pickValue(r),0)+')'));
+    addRow.appendChild(pickSel);
+    const addBtn=el('button',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'6px',color:'var(--yellow)',padding:'7px 12px',cursor:'pointer',fontFamily:"'Bebas Neue',cursive",letterSpacing:'1px',fontSize:'.8rem',transition:'all .2s'}});
+    addBtn.textContent='+ ADD';
+    addBtn.onmouseover=()=>{addBtn.style.borderColor='var(--yellow)';};
+    addBtn.onmouseout=()=>{addBtn.style.borderColor='var(--border)';};
+    addBtn.onclick=()=>{const r=parseInt(pickSel.value);if(r>=1&&r<=14){picks.push({round:r});renderTab('trade');}};
+    addRow.appendChild(addBtn);
+    pickSec.appendChild(addRow);
+    side.appendChild(pickSec);
+    return side;
+  }
+
+  // Two-column layout
+  const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 40px 1fr',gap:'12px',alignItems:'start'}});
+  grid.appendChild(buildSide('TEAM A',ts.teamA,pvA,ts.playersA,ts.picksA,'A','var(--accent)'));
+
+  // Center swap
+  const mid=el('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',paddingTop:'52px'}});
+  const swapBtn=el('div',{style:{width:'34px',height:'34px',borderRadius:'50%',background:'var(--surface)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:'1rem',transition:'all .2s'}});
+  swapBtn.textContent='⇄';
+  swapBtn.onmouseover=()=>{swapBtn.style.borderColor='var(--yellow)';swapBtn.style.transform='scale(1.15)';};
+  swapBtn.onmouseout=()=>{swapBtn.style.borderColor='var(--border)';swapBtn.style.transform='scale(1)';};
+  swapBtn.onclick=()=>{
+    const t=ts.teamA;ts.teamA=ts.teamB;ts.teamB=t;
+    const p=ts.playersA;ts.playersA=ts.playersB;ts.playersB=p;
+    const k=ts.picksA;ts.picksA=ts.picksB;ts.picksB=k;
+    renderTab('trade');
+  };
+  mid.appendChild(swapBtn);
+  grid.appendChild(mid);
+  grid.appendChild(buildSide('TEAM B',ts.teamB,pvB,ts.playersB,ts.picksB,'B','var(--purple)'));
+  wrap.appendChild(grid);
+
+  // === VERDICT ===
+  const hasTrade=ts.playersA.size>0||ts.playersB.size>0||ts.picksA.length>0||ts.picksB.length>0;
+
+  if(hasTrade){
+    const aPlayers=[...ts.playersA].map(id=>pvA.find(p=>p.id===id)).filter(Boolean);
+    const bPlayers=[...ts.playersB].map(id=>pvB.find(p=>p.id===id)).filter(Boolean);
+
+    // Context-aware: check keeper-worthiness on receiving team
+    const aCtx=aPlayers.map(p=>{
+      const worthy=isKeeperWorthy(p.id,teamB.rosterId,ts.playersB,aPlayers);
+      return{...p,isKeeper:worthy,tradeVal:worthy?p.keeperVal:p.rentalVal};
+    });
+    const bCtx=bPlayers.map(p=>{
+      const worthy=isKeeperWorthy(p.id,teamA.rosterId,ts.playersA,bPlayers);
+      return{...p,isKeeper:worthy,tradeVal:worthy?p.keeperVal:p.rentalVal};
+    });
+
+    const aVal=aCtx.reduce((s,p)=>s+p.tradeVal,0)+ts.picksA.reduce((s,pk)=>s+pickValue(pk.round),0);
+    const bVal=bCtx.reduce((s,p)=>s+p.tradeVal,0)+ts.picksB.reduce((s,pk)=>s+pickValue(pk.round),0);
+    const diff=aVal-bVal;
+    const absDiff=Math.abs(diff);
+    const pctDiff=(aVal+bVal)>0?Math.round((absDiff/Math.max(aVal,bVal))*100):0;
+
+    let verdict,vColor;
+    if(pctDiff<=8){verdict='FAIR TRADE';vColor='var(--green)';}
+    else if(diff>0){verdict=teamB.name+' WINS';vColor='var(--yellow)';}
+    else{verdict=teamA.name+' WINS';vColor='var(--yellow)';}
+
+    const vc=el('div',{class:'card',style:{marginTop:'24px',padding:'24px',background:'linear-gradient(180deg,var(--card),rgba(17,24,39,.8))',border:'1px solid rgba(234,179,8,.2)'}});
+    vc.appendChild(el('div',{class:'bb',style:{fontSize:'1.8rem',color:vColor,textAlign:'center',letterSpacing:'3px',marginBottom:'4px'}},verdict));
+    if(absDiff>0)vc.appendChild(el('div',{class:'mn',style:{textAlign:'center',fontSize:'.72rem',color:'var(--muted)',marginBottom:'16px'}},'Value gap: '+fmt(absDiff,0)+' pts ('+pctDiff+'%)'));
+
+    // Value bar
+    const total=aVal+bVal||1;
+    const barW=el('div',{style:{display:'flex',gap:'3px',height:'28px',borderRadius:'8px',overflow:'hidden',marginBottom:'6px'}});
+    const bA=el('div',{style:{width:((aVal/total)*100)+'%',background:'linear-gradient(90deg,var(--accent),rgba(249,115,22,.5))',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'6px 0 0 6px',minWidth:'40px'}});
+    bA.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color:'white'}},fmt(aVal,0)));
+    const bB=el('div',{style:{width:((bVal/total)*100)+'%',background:'linear-gradient(90deg,rgba(168,85,247,.5),var(--purple))',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'0 6px 6px 0',minWidth:'40px'}});
+    bB.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color:'white'}},fmt(bVal,0)));
+    barW.appendChild(bA);barW.appendChild(bB);vc.appendChild(barW);
+
+    const lbl=el('div',{style:{display:'flex',justifyContent:'space-between',marginBottom:'18px'}});
+    lbl.appendChild(el('span',{class:'mn',style:{fontSize:'.6rem',color:'var(--accent)'}},teamA.name+' gives'));
+    lbl.appendChild(el('span',{class:'mn',style:{fontSize:'.6rem',color:'var(--purple)'}},teamB.name+' gives'));
+    vc.appendChild(lbl);
+
+    // Breakdown
+    function buildBreak(players,picks,label,color){
+      const col=el('div');
+      col.appendChild(el('div',{class:'mn',style:{fontSize:'.58rem',color:'var(--muted)',letterSpacing:'1px',marginBottom:'6px'}},label));
+      players.forEach(p=>{
+        const row=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'4px',padding:'5px 8px',background:'var(--surface)',borderRadius:'6px'}});
+        row.appendChild(el('span',{class:'player-pos '+posClass(p.pos),style:{fontSize:'.42rem'}},p.pos));
+        row.appendChild(el('span',{style:{fontSize:'.75rem',fontWeight:'500',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},p.nm));
+        row.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color}},fmt(p.tradeVal,0)));
+        const tag=p.isKeeper
+          ?el('span',{class:'mn',style:{fontSize:'.4rem',background:'rgba(34,197,94,.12)',color:'var(--green)',padding:'2px 4px',borderRadius:'3px',fontWeight:'600'}},'KEEPER')
+          :el('span',{class:'mn',style:{fontSize:'.4rem',background:'rgba(239,68,68,.1)',color:'var(--red)',padding:'2px 4px',borderRadius:'3px',fontWeight:'600'}},'RENTAL');
+        row.appendChild(tag);
+        col.appendChild(row);
+      });
+      picks.forEach(pk=>{
+        const row=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'4px',padding:'5px 8px',background:'var(--surface)',borderRadius:'6px'}});
+        row.appendChild(el('span',{style:{fontSize:'.65rem'}},'🎟️'));
+        row.appendChild(el('span',{style:{fontSize:'.75rem',fontWeight:'500',flex:'1'}},'Round '+pk.round+' Pick'));
+        row.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color}},fmt(pickValue(pk.round),0)));
+        col.appendChild(row);
+      });
+      const tv=players.reduce((s,p)=>s+p.tradeVal,0)+picks.reduce((s,pk)=>s+pickValue(pk.round),0);
+      const foot=el('div',{style:{display:'flex',justifyContent:'space-between',marginTop:'6px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
+      foot.appendChild(el('span',{class:'mn',style:{fontSize:'.6rem',color:'var(--muted)'}},'TOTAL'));
+      foot.appendChild(el('span',{class:'bb',style:{fontSize:'1rem',color}},fmt(tv,0)));
+      col.appendChild(foot);
+      return col;
+    }
+
+    const bk=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px'}});
+    bk.appendChild(buildBreak(aCtx,ts.picksA,teamA.name+' GIVES','var(--accent)'));
+    bk.appendChild(buildBreak(bCtx,ts.picksB,teamB.name+' GIVES','var(--purple)'));
+    vc.appendChild(bk);
+    wrap.appendChild(vc);
+
+    // Keeper impact note
+    const rentalCount=aCtx.filter(p=>!p.isKeeper).length+bCtx.filter(p=>!p.isKeeper).length;
+    if(rentalCount>0){
+      const note=el('div',{class:'info-box',style:{marginTop:'14px',borderColor:'rgba(234,179,8,.2)'}});
+      note.innerHTML='<strong style="color:var(--yellow)">⚠️ Rental Alert:</strong> '+rentalCount+' player'+(rentalCount>1?'s':'')+' in this trade wouldn\'t crack the receiving team\'s top 6 keepers. Rental players are valued at 40% of keeper value since they\'ll be redrafted next season.';
+      wrap.appendChild(note);
+    }
+
+    // Reset button
+    const rw=el('div',{style:{textAlign:'center',marginTop:'14px'}});
+    const rb=el('button',{style:{background:'none',border:'1px solid var(--border)',borderRadius:'8px',color:'var(--muted)',padding:'8px 20px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:'.72rem',transition:'all .2s'}});
+    rb.textContent='Reset Trade';
+    rb.onmouseover=()=>{rb.style.borderColor='var(--red)';rb.style.color='var(--red)';};
+    rb.onmouseout=()=>{rb.style.borderColor='var(--border)';rb.style.color='var(--muted)';};
+    rb.onclick=()=>{G._tradeState=null;renderTab('trade');};
+    rw.appendChild(rb);
+    wrap.appendChild(rw);
+  }else{
+    const hint=el('div',{style:{textAlign:'center',padding:'28px',marginTop:'12px'}});
+    hint.appendChild(el('div',{style:{fontSize:'2rem',marginBottom:'8px',animation:'subtleFloat 3s ease-in-out infinite'}},'👆'));
+    hint.appendChild(el('div',{class:'mn',style:{fontSize:'.75rem',color:'var(--muted)'}},'Select teams above, then click players to build a trade'));
+    wrap.appendChild(hint);
+  }
+
+  return wrap;
 }
 
 function renderMyTeam(s){

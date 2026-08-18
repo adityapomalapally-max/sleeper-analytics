@@ -37,7 +37,10 @@ export function middleware(request) {
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://sleepercdn.com https://*.sleepercdn.com https://api.sleeper.app",
-      "connect-src 'self' https://api.sleeper.app https://generativelanguage.googleapis.com",
+      // Gemini is no longer reachable from the browser and must not be: the key
+      // lives on the server and the model is only spoken to through /api/chat,
+      // so the page has no business opening a connection to it.
+      "connect-src 'self' https://api.sleeper.app",
       "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",

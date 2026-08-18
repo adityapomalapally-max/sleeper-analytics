@@ -2413,11 +2413,14 @@ function renderMyTeam(s){
   else if(G._myTeamSubTab==='chat'){
     if(!G._chatHistory)G._chatHistory=[];
 
-    // Build context for AI
-    function buildAIContext(){
+    // The user's league, and nothing else. The persona, the grounding rules and
+    // the citation contract used to be pasted in here as user text, where any
+    // question could argue with them; they live in the server's systemInstruction
+    // now. What is left is the one thing only the client knows: this league.
+    function buildLeagueContext(){
       const standings=[...s.teams].sort((a,b)=>b.wins!==a.wins?b.wins-a.wins:b.pf-a.pf);
       const myRank=standings.findIndex(t=>t.rosterId===team.rosterId)+1;
-      let ctx='You are a fantasy football analyst assistant. Here is the user\'s team data:\n\n';
+      let ctx='';
       ctx+='LEAGUE: '+s.name+' ('+s.season+' season, '+s.scoringType+', '+s.teams.length+' teams)\n';
       ctx+='TEAM: '+team.name+' | Record: '+team.wins+'-'+team.losses+' | Rank: #'+myRank+'/'+s.teams.length+' | PF: '+fmt(team.pf,0)+' | PA: '+fmt(team.pa,0)+'\n\n';
       ctx+='POSITIONAL GRADES:\n';
@@ -2438,7 +2441,6 @@ function renderMyTeam(s){
       });
       ctx+='\nLEAGUE STANDINGS:\n';
       standings.forEach((t,i)=>{ctx+=(i+1)+'. '+t.name+' ('+t.wins+'-'+t.losses+', '+fmt(t.pf,0)+' PF)'+(t.rosterId===team.rosterId?' ← YOUR TEAM':'')+'\n';});
-      ctx+='\nGive specific, actionable fantasy advice. Be concise. Reference actual player names and positions. For trade advice, suggest realistic targets based on team needs. For waivers, suggest positions to target based on weaknesses. For start/sit, consider matchup context and recent performance.';
       return ctx;
     }
 
@@ -2450,7 +2452,7 @@ function renderMyTeam(s){
     chatHeader.appendChild(el('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},
       el('span',{style:{fontSize:'1.1rem'}},'🤖'),
       el('span',{class:'bb',style:{fontSize:'.95rem',letterSpacing:'1px',color:'var(--purple)'}},'AI ASSISTANT'),
-      el('span',{class:'mn',style:{fontSize:'.55rem',color:'var(--muted)',background:'var(--surface)',padding:'2px 8px',borderRadius:'4px'}},'Gemini')
+      el('span',{class:'mn',style:{fontSize:'.55rem',color:'var(--muted)',background:'var(--surface)',padding:'2px 8px',borderRadius:'4px'}},'Grounded in The Signal')
     ));
     // API key button removed — using server proxy
     chatHeader.appendChild(el('div',{class:'mn',style:{fontSize:'.55rem',color:'var(--muted)',background:'var(--surface)',padding:'3px 8px',borderRadius:'4px'}},'Powered by AI'));
@@ -2460,25 +2462,52 @@ function renderMyTeam(s){
     const msgArea=el('div',{style:{flex:'1',overflowY:'auto',padding:'16px',display:'flex',flexDirection:'column',gap:'12px'}});
 
     // Render existing chat history
-    function renderMsg(role,text){
+    // What the assistant actually looked up, in the reader's own words. This is
+    // not decoration: the promise is that every number came out of The Signal's
+    // data, and a promise nobody can check is just a claim. A reply with no
+    // lookups behind it says so, so "I don't have that" is visibly different
+    // from a confident answer.
+    const TOOL_LABELS={
+      find_player:'identified player',get_player:'player profile',get_team_scheme:'team scheme',
+      get_rankings:'rankings board',get_value_board:'value vs ADP',get_strength_of_schedule:'strength of schedule',
+      get_injury_curve:'return-to-play history',get_data_freshness:'data freshness'
+    };
+    function renderSources(tools){
+      const seen=[];
+      tools.forEach(t=>{
+        const label=TOOL_LABELS[t.name]||t.name;
+        const arg=t.args&&(t.args.query||t.args.id||t.args.team||t.args.position||t.args.type);
+        const line=arg?label+': '+arg:label;
+        if(!seen.includes(line))seen.push(line);
+      });
+      const wrap=el('div',{style:{marginTop:'8px',paddingTop:'8px',borderTop:'1px solid var(--border)',display:'flex',flexWrap:'wrap',gap:'6px',alignItems:'center'}});
+      wrap.appendChild(el('span',{class:'mn',style:{fontSize:'.55rem',letterSpacing:'1px',color:'var(--muted)'}},
+        seen.length?'CHECKED':'NO DATA LOOKED UP'));
+      seen.forEach(s=>{
+        wrap.appendChild(el('span',{class:'mn',style:{fontSize:'.58rem',color:'var(--cyan)',background:'rgba(6,182,212,.08)',border:'1px solid rgba(6,182,212,.2)',borderRadius:'4px',padding:'2px 7px'}},s));
+      });
+      return wrap;
+    }
+    function renderMsg(role,text,tools){
       const isUser=role==='user';
       const bubble=el('div',{style:{maxWidth:'85%',alignSelf:isUser?'flex-end':'flex-start',background:isUser?'rgba(168,85,247,.15)':'var(--surface)',border:'1px solid '+(isUser?'rgba(168,85,247,.3)':'var(--border)'),borderRadius:isUser?'12px 12px 2px 12px':'12px 12px 12px 2px',padding:'12px 16px'}});
       // Parse markdown-lite: **bold**, bullet points
       const formatted=text.replace(/\*\*(.*?)\*\*/g,'<strong style="color:var(--text)">$1</strong>').replace(/\n- /g,'\n• ').replace(/\n/g,'<br>');
       bubble.appendChild(el('div',{style:{fontSize:'.82rem',lineHeight:'1.7',color:isUser?'var(--text)':'var(--muted)'},html:formatted}));
+      if(!isUser&&Array.isArray(tools))bubble.appendChild(renderSources(tools));
       return bubble;
     }
 
-    G._chatHistory.forEach(m=>{msgArea.appendChild(renderMsg(m.role,m.text));});
+    G._chatHistory.forEach(m=>{msgArea.appendChild(renderMsg(m.role,m.text,m.tools));});
 
     // Suggested prompts (show only when no history)
     if(!G._chatHistory.length){
       const welcome=el('div',{style:{textAlign:'center',padding:'30px 10px'}});
       welcome.appendChild(el('div',{style:{fontSize:'2rem',marginBottom:'12px'}},'🤖'));
       welcome.appendChild(el('div',{class:'bb',style:{fontSize:'1.1rem',letterSpacing:'1px',color:'var(--purple)',marginBottom:'6px'}},'FANTASY AI ASSISTANT'));
-      welcome.appendChild(el('div',{style:{fontSize:'.78rem',color:'var(--muted)',marginBottom:'20px',lineHeight:'1.6'}},'I know your roster, grades, and league standings. Ask me anything about your team.'));
+      welcome.appendChild(el('div',{style:{fontSize:'.78rem',color:'var(--muted)',marginBottom:'20px',lineHeight:'1.6'}},'I know your roster and league — and every answer about NFL players comes out of The Signal\'s data, with the lookups shown. If it is not in the data, I will say so rather than guess.'));
       const suggestWrap=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px',maxWidth:'340px',margin:'0 auto'}});
-      const suggestions=['🔍 Analyze my team','🤝 Best trade targets','📋 Top waiver pickups','⚡ Start/sit advice'];
+      const suggestions=['🔍 Analyze my team','🤝 Best trade targets','📊 Who is the market wrong about?','🏥 Any injury risk on my roster?'];
       suggestions.forEach(sg=>{
         const btn=el('div',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'10px',padding:'10px 16px',cursor:'pointer',fontSize:'.8rem',color:'var(--text)',transition:'all .2s',textAlign:'left'}});
         btn.textContent=sg;
@@ -2506,7 +2535,7 @@ function renderMyTeam(s){
       G._chatHistory.push({role:'user',text:text.trim()});
       // Clear welcome if present and re-render messages
       msgArea.innerHTML='';
-      G._chatHistory.forEach(m=>{msgArea.appendChild(renderMsg(m.role,m.text));});
+      G._chatHistory.forEach(m=>{msgArea.appendChild(renderMsg(m.role,m.text,m.tools));});
 
       // Loading indicator
       const loadingBubble=el('div',{style:{alignSelf:'flex-start',display:'flex',gap:'6px',padding:'12px 16px'}});
@@ -2517,26 +2546,27 @@ function renderMyTeam(s){
       chatInput.value='';chatInput.disabled=true;sendBtn.disabled=true;
 
       try{
-        const ctx=buildAIContext();
-        let prompt2=ctx+'\n\n---\nUser question: '+text.trim();
-        if(G._chatHistory.length>1){
-          const histParts=G._chatHistory.slice(0,-1).map(m=>m.role+': '+m.text).join('\n');
-          prompt2=ctx+'\n\nPrevious conversation:\n'+histParts+'\n\n---\nUser question: '+text.trim();
-        }
+        // Real turns, not one flattened blob. The server keeps them as separate
+        // roles so the model can tell the reader's words from its own and from
+        // the league dump — which the old single-string prompt could not.
         const resp=await fetch('/api/chat',{
           method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({prompt:prompt2})
+          body:JSON.stringify({
+            message:text.trim(),
+            history:G._chatHistory.slice(0,-1).slice(-12),
+            league:buildLeagueContext()
+          })
         });
         const data=await resp.json();
         if(!resp.ok)throw new Error(data.error||'Server error ('+resp.status+')');
-        G._chatHistory.push({role:'assistant',text:data.reply});
+        G._chatHistory.push({role:'assistant',text:data.reply,tools:data.toolsUsed||[]});
       }catch(e){
         G._chatHistory.push({role:'assistant',text:'⚠️ '+e.message});
       }
 
       // Re-render messages
       msgArea.innerHTML='';
-      G._chatHistory.forEach(m=>{msgArea.appendChild(renderMsg(m.role,m.text));});
+      G._chatHistory.forEach(m=>{msgArea.appendChild(renderMsg(m.role,m.text,m.tools));});
       msgArea.scrollTop=msgArea.scrollHeight;
       chatInput.disabled=false;sendBtn.disabled=false;chatInput.focus();
     }

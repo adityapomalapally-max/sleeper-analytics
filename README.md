@@ -6,7 +6,7 @@ The deepest fantasy football analytics platform — power rankings, AI-powered t
 
 - **10 Analysis Tabs**: Standings, Power Rankings, Scoring, Luck Index, Matchups, H2H Matrix, My Team, Season Recap, What-If, League History
 - **AI Assistant**: Gemini-powered fantasy analyst that knows your roster, grades, and league context
-- **Dynasty Rankings**: KTC-style keeper values with superflex positional weighting
+- **Keeper values**: VORP read from The Signal — the projected points of the slot a player was ranked into, above the replacement player at his position. The order is a hand ranking, the scale is a projection set, and both travel with the number. A player the data does not rank carries **no** value rather than an estimated one, and draft picks are not priced at all.
 - **Optimal Lineup Analysis**: See what your record would be if you set perfect lineups
 - **Full League History**: Automatic loading of all past seasons via Sleeper's API
 
@@ -32,8 +32,8 @@ Open [http://localhost:3000](http://localhost:3000).
 
 - **Frontend**: Single self-contained HTML file (`public/index.html`) — vanilla JS, no framework
 - **Backend**: Next.js API route (`app/api/chat/route.js`) — Gemini proxy with IP-based rate limiting (30 req/day)
-- **Data**: All fantasy data from Sleeper's public API (no key needed)
-- **AI**: Google Gemini 2.0 Flash via server-side proxy (key hidden from users)
+- **Data**: League data from Sleeper's public API (no key needed). Player values, ranks, projections and the assistant's facts come from The Signal's published JSON, read server-side (`lib/moat.js`, `lib/values.js`) and served by `/api/values` — the browser cannot fetch it directly, because it is another origin and this app's CSP allows only itself and Sleeper.
+- **AI**: Gemini via a server-side proxy (key hidden from users). The model is a FALLBACK CHAIN, not a pinned name — `gemini-2.5-flash` first, then newer flash releases — because `gemini-2.0-flash`, which this file used to name, was retired and every chat request failed while `/api/health` still reported the key as configured. A pinned model name is a dependency with an expiry date on it.
 
 ## Environment Variables
 

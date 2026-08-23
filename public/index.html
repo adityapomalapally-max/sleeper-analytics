@@ -808,6 +808,23 @@ function renderTab(name){
   const c=$('tab-content');c.innerHTML='';
   const s=G.seasons[G.currentSeasonIdx];
   const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
+
+  // The trade tab cannot render before the values are in hand — without them
+  // every player reads as unpriced, which is true but useless while a fetch is
+  // still in flight.
+  //
+  // THE GUARD IS THE LATCH, NOT THE DATA. `valuesLoaded` is set to true even
+  // when the fetch fails, so a page with no values renders once and stops. A
+  // guard on `G.values` being empty would be true again on the second pass and
+  // the tab would re-render itself forever.
+  if(name==='trade'&&!G.valuesLoaded){
+    c.appendChild(el('div',{class:'card',style:{padding:'24px',textAlign:'center'}},'Loading published player values…'));
+    ensureValues().then(()=>{
+      const active=document.querySelector('#tabs .tab.on');
+      if((active?.dataset?.tab||'')==='trade')renderTab('trade');
+    });
+    return;
+  }
   if(fn[name])c.appendChild(fn[name](s));
 }
 
@@ -1769,42 +1786,51 @@ function fillStarterSlots(players, slots){
 /* ═══════════════════════════════════════════════════════════════════════════
    DYNASTY VALUE ESTIMATOR — KTC-inspired value using age + production + pos
    ═══════════════════════════════════════════════════════════════════════════ */
-function computeKTCValue(pid, seasonPPG){
-  if(!G.playerDB||!G.playerDB[pid])return 0;
-  const p=G.playerDB[pid];
-  const pos=p.pos;const age=p.age||26;const ppg=seasonPPG||0;
-  if(!pos||!['QB','RB','WR','TE'].includes(pos))return 0;
+/* ═══════════════════════════════════════════════════════════════════════════
+   SOURCED PLAYER VALUES
+   ═══════════════════════════════════════════════════════════════════════════
+   WHAT WAS HERE. computeKTCValue: ten hand-tuned constants and no source —
+   points per game times 100, a 0.04-per-year youth premium, a 1.25x "young stud
+   bonus", position scarcity multipliers, a 0.15 floor on the age penalty. Its
+   caller applied a SECOND undocumented positional weight on top of the first,
+   and called 40% of the result a "rental value". The README described the
+   output as "KTC-style keeper values". Every trade verdict this page printed
+   rested on those numbers and not one of them could be checked by anybody.
 
-  // Base value from production (PPG is most important signal)
-  const ppgWeight={QB:1.0,RB:1.1,WR:1.05,TE:1.15};
-  let value=ppg*(ppgWeight[pos]||1)*100;
+   WHAT IS HERE NOW. /api/values serves VORP — the projected points of the slot
+   a player was RANKED into, above the replacement player at his position — read
+   from The Signal, joined on the Sleeper id, with the method and the baselines
+   travelling with the number. See lib/values.js for why it is the ranked slot
+   rather than the player's own projection.
 
-  // Age curve: peak ages differ by position
-  const peakAge={QB:27,RB:24,WR:26,TE:26};
-  const decayRate={QB:0.03,RB:0.08,WR:0.04,TE:0.04};
-  const peak=peakAge[pos];const decay=decayRate[pos];
-  if(age<=peak){
-    // Youth premium: younger = more upside
-    value*=1+(peak-age)*0.04;
-  }else{
-    // Age penalty: accelerating decline
-    const yearsOver=age-peak;
-    value*=Math.max(0.15,1-yearsOver*decay-(yearsOver>4?yearsOver*0.02:0));
-  }
+   AND IT DOES NOT REACH EVERY PLAYER, which is the part the page has to be
+   honest about. A player with no published rank has NO value here. Not zero,
+   not estimated from his points per game — absent, and said so.
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function ensureValues(){
+  if(G.valuesLoaded)return G.values;
+  if(G.valuesPromise)return G.valuesPromise;
+  G.valuesPromise=(async()=>{
+    try{
+      const r=await fetch('/api/values');
+      const d=await r.json();
+      // An error body still carries players:{}, so the page renders "no value"
+      // everywhere rather than throwing. Missing values are a state; a crash is not.
+      G.values=(d&&d.players)?d:{players:{},limits:[],coverage:{}};
+    }catch(e){
+      G.values={players:{},limits:[],coverage:{},unavailable:true};
+    }
+    G.valuesLoaded=true;
+    return G.values;
+  })();
+  return G.valuesPromise;
+}
 
-  // Position scarcity premium
-  const scarcity={QB:1.15,RB:0.95,WR:1.0,TE:1.1};
-  value*=(scarcity[pos]||1);
-
-  // Young stud bonus (high production + young age)
-  if(ppg>=15&&age<=25)value*=1.25;
-  if(ppg>=20&&age<=27)value*=1.15;
-
-  // Breakout/rookie premium
-  const yrs=p.yrs;
-  if(yrs!=null&&yrs<=2&&ppg>=10)value*=1.15;
-
-  return Math.round(value);
+/** The published value for a Sleeper id, or null. Never a fallback number. */
+function sourcedValue(pid){
+  const t=G.values&&G.values.players;
+  if(!t)return null;
+  return t[String(pid)]||null;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1892,22 +1918,40 @@ function renderTrade(s){
       const pos=db.pos;
       if(!pos||!['QB','RB','WR','TE'].includes(pos))return null;
       const ppg=p.gp>0?p.tot/p.gp:0;
-      if(ppg<=0)return null;
-      const raw=computeKTCValue(p.id,ppg);
-      const posW={QB:1.30,RB:1.10,WR:1.00,TE:0.90};
-      const val=Math.round(raw*(posW[pos]||1));
-      const rental=Math.round(val*0.4);
-      return{id:p.id,pos,ppg,age:db.age,keeperVal:val,rentalVal:rental,nm:pName(p.id),full:pFull(p.id)};
-    }).filter(Boolean).sort((a,b)=>b.keeperVal-a.keeperVal);
+      // NO POSITIONAL MULTIPLIER ON TOP. VORP is already measured against each
+      // position's own replacement level, which IS the scarcity adjustment —
+      // the old QB 1.30 / TE 0.90 weights counted it a second time.
+      // NO RENTAL DISCOUNT EITHER. Whether a player would be kept is a league
+      // rule and is still shown as a tag; the 40% haircut that used to be
+      // applied to his value had no source and is gone.
+      const v=sourcedValue(p.id);
+      return{
+        id:p.id,pos,ppg,age:db.age,
+        val:v?v.vorp:null,          // null means "not published", never zero
+        posRank:v?v.posRank:null,
+        adp:v?v.adp:null,
+        source:v?v.source:null,
+        nm:pName(p.id),full:pFull(p.id)
+      };
+    }).filter(Boolean).sort((a,b)=>{
+      // Unvalued players sort last in both directions rather than reading as
+      // worthless — the same rule The Signal's tables use for a missing figure.
+      if(a.val==null&&b.val==null)return b.ppg-a.ppg;
+      if(a.val==null)return 1;
+      if(b.val==null)return -1;
+      return b.val-a.val;
+    });
   }
 
   // Cache all team values
   const teamVals={};
   ls.teams.forEach(t=>{teamVals[t.rosterId]=getTeamPlayerValues(t);});
 
-  // Draft pick value curve (14-round, 10-team keeper league)
-  const PICK_VALUES=[0,2200,1800,1400,1100,850,600,400,250,150,100,60,40,25,15];
-  function pickValue(rd){return PICK_VALUES[rd]||0;}
+  // DRAFT PICKS ARE NOT PRICED. What was here was a 14-number curve — 2200 for
+  // a first, 1800 for a second — with no source behind any of it. Nothing in
+  // the data prices a fantasy pick: The Signal's draft-outcomes.json is about
+  // NFL draft rounds, which is a different question. Picks are still listed in
+  // a trade, and they are never added to a total.
 
   // Check if player would be keeper-worthy on receiving team after trade
   function isKeeperWorthy(playerId,recvRosterId,tradedAwayIds,incomingPlayers){
@@ -1915,7 +1959,10 @@ function renderTrade(s){
     const remaining=current.filter(p=>!tradedAwayIds.has(p.id));
     const combined=[...remaining,...incomingPlayers];
     const qbC={n:0};
-    const sorted=[...combined].sort((a,b)=>b.keeperVal-a.keeperVal);
+    // The league's keeper rule — top 6 with at most 2 QBs — is a RULE, not an
+    // invented number, so it survives. It orders on the published value, and a
+    // player with none cannot be shown to make the cut, so he sorts last.
+    const sorted=[...combined].sort((a,b)=>(b.val==null?-1:b.val)-(a.val==null?-1:a.val));
     const capped=sorted.filter(p=>{
       if(p.pos==='QB'){if(qbC.n>=2)return false;qbC.n++;}
       return true;
@@ -1978,7 +2025,11 @@ function renderTrade(s){
       meta.appendChild(el('span',{class:'mn',style:{fontSize:'.5rem',color:'var(--muted)'}},fmt(p.ppg,1)+'/g'));
       info.appendChild(meta);
       card.appendChild(info);
-      card.appendChild(el('span',{class:'bb',style:{fontSize:'.85rem',color:selected?'var(--yellow)':'var(--accent)'}},fmt(p.keeperVal,0)));
+      // A player with no published value says so, in words. A dash would read
+      // as nothing-to-see; "—" next to a column of numbers reads as zero.
+      card.appendChild(p.val==null
+        ?el('span',{class:'mn',style:{fontSize:'.5rem',color:'var(--muted)',textAlign:'right',lineHeight:'1.2'}},'no published\nvalue')
+        :el('span',{class:'bb',style:{fontSize:'.85rem',color:selected?'var(--yellow)':'var(--accent)'}},fmt(p.val,0)));
       if(isTop6)card.appendChild(el('span',{class:'mn',style:{fontSize:'.42rem',background:'rgba(234,179,8,.12)',color:'var(--yellow)',padding:'2px 5px',borderRadius:'3px',fontWeight:'600'}},'K'));
       roster.appendChild(card);
     });
@@ -1992,7 +2043,7 @@ function renderTrade(s){
       picks.forEach((pk,pi)=>{
         const chip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'5px',background:'rgba(234,179,8,.08)',border:'1px solid rgba(234,179,8,.25)',borderRadius:'6px',padding:'4px 8px',fontSize:'.7rem',cursor:'pointer'}});
         chip.appendChild(el('span',{style:{fontWeight:'600',color:'var(--yellow)'}},'Rd '+pk.round));
-        chip.appendChild(el('span',{class:'mn',style:{fontSize:'.5rem',color:'var(--muted)'}},fmt(pickValue(pk.round),0)));
+        chip.appendChild(el('span',{class:'mn',style:{fontSize:'.5rem',color:'var(--muted)'}},'not priced'));
         chip.appendChild(el('span',{style:{color:'var(--red)',fontWeight:'700',fontSize:'.65rem'}},'✕'));
         chip.onclick=()=>{picks.splice(pi,1);renderTab('trade');};
         chips.appendChild(chip);
@@ -2002,7 +2053,7 @@ function renderTrade(s){
     const addRow=el('div',{style:{display:'flex',gap:'6px'}});
     const pickSel=el('select',{class:'team-select',style:{flex:'1',fontSize:'.72rem',padding:'7px 10px'}});
     pickSel.appendChild(el('option',{value:''},'Add pick...'));
-    for(let r=1;r<=14;r++)pickSel.appendChild(el('option',{value:String(r)},'Round '+r+' ('+fmt(pickValue(r),0)+')'));
+    for(let r=1;r<=14;r++)pickSel.appendChild(el('option',{value:String(r)},'Round '+r));
     addRow.appendChild(pickSel);
     const addBtn=el('button',{style:{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:'6px',color:'var(--yellow)',padding:'7px 12px',cursor:'pointer',fontFamily:"'Bebas Neue',cursive",letterSpacing:'1px',fontSize:'.8rem',transition:'all .2s'}});
     addBtn.textContent='+ ADD';
@@ -2043,30 +2094,48 @@ function renderTrade(s){
     const aPlayers=[...ts.playersA].map(id=>pvA.find(p=>p.id===id)).filter(Boolean);
     const bPlayers=[...ts.playersB].map(id=>pvB.find(p=>p.id===id)).filter(Boolean);
 
-    // Context-aware: check keeper-worthiness on receiving team
-    const aCtx=aPlayers.map(p=>{
-      const worthy=isKeeperWorthy(p.id,teamB.rosterId,ts.playersB,aPlayers);
-      return{...p,isKeeper:worthy,tradeVal:worthy?p.keeperVal:p.rentalVal};
-    });
-    const bCtx=bPlayers.map(p=>{
-      const worthy=isKeeperWorthy(p.id,teamA.rosterId,ts.playersA,bPlayers);
-      return{...p,isKeeper:worthy,tradeVal:worthy?p.keeperVal:p.rentalVal};
-    });
+    // Keeper-worthiness on the receiving roster is a LEAGUE RULE (top 6, at
+    // most 2 QBs) and stays. The value is the published one either way: the 40%
+    // "rental" haircut that used to be applied here had no source.
+    const aCtx=aPlayers.map(p=>({...p,isKeeper:isKeeperWorthy(p.id,teamB.rosterId,ts.playersB,aPlayers),tradeVal:p.val}));
+    const bCtx=bPlayers.map(p=>({...p,isKeeper:isKeeperWorthy(p.id,teamA.rosterId,ts.playersA,bPlayers),tradeVal:p.val}));
 
-    const aVal=aCtx.reduce((s,p)=>s+p.tradeVal,0)+ts.picksA.reduce((s,pk)=>s+pickValue(pk.round),0);
-    const bVal=bCtx.reduce((s,p)=>s+p.tradeVal,0)+ts.picksB.reduce((s,pk)=>s+pickValue(pk.round),0);
+    // Only what is published is summed. Everything else is counted and named.
+    const aVal=sumOf(aCtx.map(p=>p.tradeVal));
+    const bVal=sumOf(bCtx.map(p=>p.tradeVal));
+    const aUnpriced=aCtx.filter(p=>p.tradeVal==null);
+    const bUnpriced=bCtx.filter(p=>p.tradeVal==null);
+    const unpricedPlayers=aUnpriced.length+bUnpriced.length;
+    const picksInTrade=ts.picksA.length+ts.picksB.length;
     const diff=aVal-bVal;
     const absDiff=Math.abs(diff);
     const pctDiff=(aVal+bVal)>0?Math.round((absDiff/Math.max(aVal,bVal))*100):0;
 
+    // NO WINNER IS NAMED OVER PLAYERS THE DATA COULD NOT PRICE. An unranked
+    // player is not a small player — he is an unknown one, and a verdict that
+    // silently leaves him out is a verdict about a different trade. Same for a
+    // pick: nothing here prices one. The gap between what IS published is still
+    // shown, because that part is true.
+    const canJudge=unpricedPlayers===0&&picksInTrade===0;
     let verdict,vColor;
-    if(pctDiff<=8){verdict='FAIR TRADE';vColor='var(--green)';}
+    if(!canJudge){
+      verdict='NOT A COMPLETE PICTURE';vColor='var(--muted)';
+    }else if(pctDiff<=8){verdict='FAIR TRADE';vColor='var(--green)';}
     else if(diff>0){verdict=teamB.name+' WINS';vColor='var(--yellow)';}
     else{verdict=teamA.name+' WINS';vColor='var(--yellow)';}
 
     const vc=el('div',{class:'card',style:{marginTop:'24px',padding:'24px',background:'linear-gradient(180deg,var(--card),rgba(17,24,39,.8))',border:'1px solid rgba(234,179,8,.2)'}});
     vc.appendChild(el('div',{class:'bb',style:{fontSize:'1.8rem',color:vColor,textAlign:'center',letterSpacing:'3px',marginBottom:'4px'}},verdict));
-    if(absDiff>0)vc.appendChild(el('div',{class:'mn',style:{textAlign:'center',fontSize:'.72rem',color:'var(--muted)',marginBottom:'16px'}},'Value gap: '+fmt(absDiff,0)+' pts ('+pctDiff+'%)'));
+    if(!canJudge){
+      const bits=[];
+      if(unpricedPlayers)bits.push(unpricedPlayers+' player'+(unpricedPlayers===1?'':'s')+' with no published value ('
+        +[...aUnpriced,...bUnpriced].map(p=>p.nm).join(', ')+')');
+      if(picksInTrade)bits.push(picksInTrade+' draft pick'+(picksInTrade===1?'':'s')+', which nothing here prices');
+      vc.appendChild(el('div',{class:'mn',style:{textAlign:'center',fontSize:'.68rem',color:'var(--muted)',marginBottom:'14px',lineHeight:'1.7',maxWidth:'560px',marginLeft:'auto',marginRight:'auto'}},
+        'This trade includes '+bits.join(' and ')+'. The gap below is over the players that ARE priced; who wins is not something this data can say.'));
+    }
+    if(absDiff>0)vc.appendChild(el('div',{class:'mn',style:{textAlign:'center',fontSize:'.72rem',color:'var(--muted)',marginBottom:'16px'}},
+      (canJudge?'Value gap: ':'Gap over the priced players: ')+fmt(absDiff,0)+' pts above replacement ('+pctDiff+'%)'));
 
     // Value bar
     const total=aVal+bVal||1;
@@ -2090,7 +2159,9 @@ function renderTrade(s){
         const row=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'4px',padding:'5px 8px',background:'var(--surface)',borderRadius:'6px'}});
         row.appendChild(el('span',{class:'player-pos '+posClass(p.pos),style:{fontSize:'.42rem'}},p.pos));
         row.appendChild(el('span',{style:{fontSize:'.75rem',fontWeight:'500',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},p.nm));
-        row.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color}},fmt(p.tradeVal,0)));
+        row.appendChild(p.tradeVal==null
+          ?el('span',{class:'mn',style:{fontSize:'.52rem',color:'var(--muted)'}},'not priced')
+          :el('span',{class:'bb',style:{fontSize:'.8rem',color}},fmt(p.tradeVal,0)));
         const tag=p.isKeeper
           ?el('span',{class:'mn',style:{fontSize:'.4rem',background:'rgba(34,197,94,.12)',color:'var(--green)',padding:'2px 4px',borderRadius:'3px',fontWeight:'600'}},'KEEPER')
           :el('span',{class:'mn',style:{fontSize:'.4rem',background:'rgba(239,68,68,.1)',color:'var(--red)',padding:'2px 4px',borderRadius:'3px',fontWeight:'600'}},'RENTAL');
@@ -2101,10 +2172,10 @@ function renderTrade(s){
         const row=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'4px',padding:'5px 8px',background:'var(--surface)',borderRadius:'6px'}});
         row.appendChild(el('span',{style:{fontSize:'.65rem'}},'🎟️'));
         row.appendChild(el('span',{style:{fontSize:'.75rem',fontWeight:'500',flex:'1'}},'Round '+pk.round+' Pick'));
-        row.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color}},fmt(pickValue(pk.round),0)));
+        row.appendChild(el('span',{class:'mn',style:{fontSize:'.52rem',color:'var(--muted)'}},'not priced'));
         col.appendChild(row);
       });
-      const tv=players.reduce((s,p)=>s+p.tradeVal,0)+picks.reduce((s,pk)=>s+pickValue(pk.round),0);
+      const tv=sumOf(players.map(p=>p.tradeVal));
       const foot=el('div',{style:{display:'flex',justifyContent:'space-between',marginTop:'6px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
       foot.appendChild(el('span',{class:'mn',style:{fontSize:'.6rem',color:'var(--muted)'}},'TOTAL'));
       foot.appendChild(el('span',{class:'bb',style:{fontSize:'1rem',color}},fmt(tv,0)));
@@ -2118,13 +2189,36 @@ function renderTrade(s){
     vc.appendChild(bk);
     wrap.appendChild(vc);
 
-    // Keeper impact note
+    // Keeper impact. THE NOTE NO LONGER CLAIMS A DISCOUNT, because there is no
+    // longer one to claim: it used to say rentals were "valued at 40% of keeper
+    // value", a number with no source behind it. Whether a player makes the
+    // receiving team's keeper slots is a league rule and worth saying; what
+    // that costs in trade value is not something this data knows.
     const rentalCount=aCtx.filter(p=>!p.isKeeper).length+bCtx.filter(p=>!p.isKeeper).length;
     if(rentalCount>0){
       const note=el('div',{class:'info-box',style:{marginTop:'14px',borderColor:'rgba(234,179,8,.2)'}});
-      note.innerHTML='<strong style="color:var(--yellow)">⚠️ Rental Alert:</strong> '+rentalCount+' player'+(rentalCount>1?'s':'')+' in this trade wouldn\'t crack the receiving team\'s top 6 keepers. Rental players are valued at 40% of keeper value since they\'ll be redrafted next season.';
+      note.innerHTML='<strong style="color:var(--yellow)">Keeper note:</strong> '+rentalCount+' player'+(rentalCount>1?'s':'')+' in this trade would not crack the receiving team\'s top 6 keepers under the 2-QB cap, so '+(rentalCount>1?'they are':'he is')+' a one-season rental there. The values above are not discounted for that — what a rental is worth against a keeper is a judgement this data does not make.';
       wrap.appendChild(note);
     }
+
+    // WHERE THE NUMBERS CAME FROM, on the page rather than in a README. A value
+    // a reader cannot trace is a value they have to take on trust, and the last
+    // set on this page did not deserve any.
+    const V=G.values||{};
+    const src=el('div',{class:'info-box',style:{marginTop:'14px',borderColor:'var(--border)'}});
+    const cov=V.coverage||{};
+    src.innerHTML='<strong style="color:var(--text)">Where these values come from.</strong> '
+      +(V.unavailable
+        ?'The value service could not be reached, so nothing on this page is priced.'
+        :'Value is <strong>VORP</strong> — the projected points of the slot a player was ranked into, above the replacement player at his position ('
+          +(V.format||'')+'). The order is The Signal\'s hand ranking; the scale is its projection set. '
+          +'Positions are already priced by measuring against their own replacement level, so no positional multiplier is applied on top. '
+          +'<br><br><strong>'+(cov.ranked||0)+'</strong> players carry a published value. '
+          +'Another <strong>'+(cov.adpOnly||0)+'</strong> appear in consensus ADP but are not ranked, and the rest of a roster is in neither — '
+          +'those players are shown as <em>not priced</em> rather than as zero, and no winner is declared in a trade that includes one. '
+          +'Draft picks are not priced at all: nothing in this data prices a fantasy pick.'
+          +(V.reproducesOverall===false?'<br><br><strong style="color:var(--red)">These values no longer reproduce The Signal\'s published board — treat them as this app\'s own until that is fixed.</strong>':''));
+    wrap.appendChild(src);
 
     // Reset button
     const rw=el('div',{style:{textAlign:'center',marginTop:'14px'}});

@@ -272,13 +272,19 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
         </div>
         <div class="fu3" style="width:100%;max-width:440px;position:relative;z-index:1">
           <div class="card" style="padding:28px;border-color:rgba(249,115,22,.15);background:linear-gradient(180deg,var(--card) 0%,rgba(17,24,39,.8) 100%)">
-            <div class="bb" style="font-size:1rem;letter-spacing:2px;color:var(--accent);margin-bottom:16px">ENTER LEAGUE ID</div>
+            <!-- The heading IS the label. It was styled text with no relationship
+                 to the field, so the only control on the landing page announced
+                 itself as an unnamed text box; a placeholder is not a name,
+                 because it disappears the moment anyone types. -->
+            <label class="bb" for="league-input" style="display:block;font-size:1rem;letter-spacing:2px;color:var(--accent);margin-bottom:16px">ENTER LEAGUE ID</label>
             <div style="display:flex;flex-direction:column;gap:12px">
-              <input class="inp" id="league-input" placeholder="e.g. 784506801074257920" type="text"/>
+              <input class="inp" id="league-input" placeholder="e.g. 784506801074257920" type="text"
+                     inputmode="numeric" autocomplete="off" aria-describedby="league-input-help"/>
               <button class="btn" id="analyze-btn" onclick="analyze()">ANALYZE LEAGUE →</button>
-              <div id="error-box" class="error-box" style="display:none"></div>
+              <!-- The error is announced when it appears rather than only painted red. -->
+              <div id="error-box" class="error-box" role="alert" style="display:none"></div>
             </div>
-            <div class="mn" style="font-size:.62rem;color:var(--muted);margin-top:14px;line-height:1.6">Find ID: Sleeper app → League → Settings → scroll to bottom</div>
+            <div id="league-input-help" class="mn" style="font-size:.62rem;color:var(--muted);margin-top:14px;line-height:1.6">Find ID: Sleeper app → League → Settings → scroll to bottom</div>
             <div id="saved-leagues" style="margin-top:16px"></div>
           </div>
         </div>
@@ -411,10 +417,15 @@ function minOf(arr,fb=0){return arr.length?Math.min(...arr):fb;}
 function sumOf(arr){return arr.reduce((s,v)=>s+(v||0),0);}
 function avgOf(arr){const v=arr.filter(x=>x!=null&&!isNaN(x)&&x>0);return v.length?sumOf(v)/v.length:0;}
 
+// THE AVATAR IS DECORATIVE AND SAYS SO. Every one of these sits directly beside
+// the team or player name it belongs to, so a screen reader that announces both
+// reads the name twice. `alt=""` plus aria-hidden is the correct treatment for
+// an image the surrounding text already names — inventing "Trainer Red's avatar"
+// would be worse than nothing, not better.
 function makeAvatar(name,avatar,size=40){
   const w=el('div',{style:{width:size+'px',height:size+'px',borderRadius:'50%',flexShrink:'0',overflow:'hidden'}});
-  if(avatar){const img=el('img',{src:'https://sleepercdn.com/avatars/thumbs/'+avatar,style:{width:'100%',height:'100%',objectFit:'cover'}});img.onerror=()=>{w.innerHTML='';w.appendChild(el('div',{class:'ava',style:{width:size+'px',height:size+'px',fontSize:(size*.35)+'px'}},initials(name)));};w.appendChild(img);}
-  else w.appendChild(el('div',{class:'ava',style:{width:size+'px',height:size+'px',fontSize:(size*.35)+'px'}},initials(name)));
+  if(avatar){const img=el('img',{alt:'','aria-hidden':'true',src:'https://sleepercdn.com/avatars/thumbs/'+avatar,style:{width:'100%',height:'100%',objectFit:'cover'}});img.onerror=()=>{w.innerHTML='';w.appendChild(el('div',{class:'ava','aria-hidden':'true',style:{width:size+'px',height:size+'px',fontSize:(size*.35)+'px'}},initials(name)));};w.appendChild(img);}
+  else w.appendChild(el('div',{class:'ava','aria-hidden':'true',style:{width:size+'px',height:size+'px',fontSize:(size*.35)+'px'}},initials(name)));
   return w;
 }
 function makePill(label,value,color='var(--accent)'){
@@ -811,16 +822,33 @@ async function loadHistoryBackground(prevId){
 /* ═══════════════════════════════════════════════════════════════════════════
    TABS / NAVIGATION
    ═══════════════════════════════════════════════════════════════════════════ */
+// THESE ARE THE SITE'S NAVIGATION AND THEY ANNOUNCED NOTHING. They were eleven
+// buttons with a class that happened to mean "selected": a screen reader user
+// could hear every label and never learn which one they were on, or that the
+// panel below belonged to it. The class stays — it is what the CSS paints — and
+// aria-selected carries the same fact to anyone not looking at the paint.
 function buildTabs(){
   const container=$('tabs');container.innerHTML='';
+  container.setAttribute('role','tablist');
+  container.setAttribute('aria-label','Analysis views');
   TABS.forEach(t=>{
-    const btn=el('button',{class:'tab'+(t.cls?' '+t.cls:''),'data-tab':t.id},t.label);
+    const btn=el('button',{class:'tab'+(t.cls?' '+t.cls:''),'data-tab':t.id,role:'tab',
+      id:'tab-'+t.id,'aria-controls':'tab-content','aria-selected':'false'},t.label);
     btn.onclick=()=>setTab(t.id);
     container.appendChild(btn);
   });
 }
 function setTab(name){
-  document.querySelectorAll('#tabs .tab').forEach(t=>{t.classList.toggle('on',t.dataset.tab===name);});
+  document.querySelectorAll('#tabs .tab').forEach(t=>{
+    const on=t.dataset.tab===name;
+    t.classList.toggle('on',on);
+    t.setAttribute('aria-selected',String(on));
+  });
+  const panel=$('tab-content');
+  if(panel){
+    panel.setAttribute('role','tabpanel');
+    panel.setAttribute('aria-labelledby','tab-'+name);
+  }
   renderTab(name);
 }
 function renderTab(name){
@@ -845,6 +873,35 @@ function renderTab(name){
     return;
   }
   if(fn[name])c.appendChild(fn[name](s));
+  promoteClickables(c);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   KEYBOARD REACH
+   ═══════════════════════════════════════════════════════════════════════════
+   Most of this app renders through el(), and a clickable <div> is invisible to
+   a keyboard and to a screen reader: no role, no tab stop, no Enter. Rather
+   than rewrite every call site, promote them after the render — give each one
+   a button role, put it in the tab order, and map Enter and Space to the click
+   it already has.
+
+   Space is preventDefault-ed because on a role=button the browser would
+   otherwise scroll the page instead, which is the behaviour of the div it used
+   to be rather than of the button it now claims to be. */
+function promoteClickables(scope){
+  const NATIVE=new Set(['A','BUTTON','INPUT','SELECT','TEXTAREA']);
+  scope.querySelectorAll('*').forEach(node=>{
+    if(NATIVE.has(node.tagName))return;
+    if(!node.onclick&&!node.getAttribute('onclick'))return;
+    if(node.getAttribute('role')==='button')return;      // already promoted
+    node.setAttribute('role','button');
+    node.setAttribute('tabindex','0');
+    node.addEventListener('keydown',e=>{
+      if(e.key!=='Enter'&&e.key!==' ')return;
+      e.preventDefault();
+      node.click();
+    });
+  });
 }
 
 function renderSeasonBar(){
@@ -2762,7 +2819,7 @@ function renderMyTeam(s){
       const isIR=inj&&(inj.toLowerCase().includes('ir')||inj.toLowerCase()==='injured_reserve'||inj.toLowerCase()==='pup');
       const card=el('div',{class:'player-card'+(p.isStarter?' starter':isIR?' ir':' bench'),style:{animation:'fadeUp .3s '+(i*.03)+'s ease both'}});
       const ava=el('div',{class:'player-avatar'});
-      const img=el('img',{src:getPlayerImgUrl(p.id),loading:'lazy'});
+      const img=el('img',{alt:'','aria-hidden':'true',src:getPlayerImgUrl(p.id),loading:'lazy'});
       img.onerror=()=>{ava.innerHTML='';ava.appendChild(el('div',{class:'ava',style:{width:'40px',height:'40px',fontSize:'13px'}},initials(p.name)));};
       ava.appendChild(img);card.appendChild(ava);
       const info=el('div',{class:'player-info'});
@@ -3409,6 +3466,9 @@ function renderSavedLeagues(){
       container.appendChild(btn);
     });
   }catch(e){}
+  // Outside #tab-content, so renderTab's pass never reaches these — and this
+  // card is the first thing a returning reader clicks.
+  promoteClickables(container);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

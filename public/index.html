@@ -8,9 +8,28 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
+  /* ── The palette carries text, so it is measured rather than picked ────────
+     Every value below clears WCAG AA (4.5:1) against all three surfaces —
+     --bg, --surface and --card — and clears it again with --ink on top, which
+     is what a filled badge or button needs. tests/contrast.test.js re-derives
+     the arithmetic and fails on a value that stops passing, so this cannot
+     drift back.
+
+     What was wrong (measured 2026-08-22): --muted #64748b was 3.73:1 on card
+     and carried 134 usages — most of the secondary text on the site. --purple
+     #a855f7 was 4.48. And white text on a filled accent was 2.80, which is the
+     worst number in the whole app: WHITE IS NOT A TEXT COLOUR ON A BRIGHT
+     FILL, --ink is. */
   --bg:#080b14;--surface:#0d1220;--card:#111827;--border:#1e293b;
-  --accent:#f97316;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;
-  --purple:#a855f7;--yellow:#eab308;--text:#f8fafc;--muted:#64748b;--subtle:#1e2d3d;
+  --accent:#f97316;--green:#22c55e;--red:#f87171;--blue:#60a5fa;
+  --purple:#ad6bf7;--yellow:#eab308;--text:#f8fafc;--muted:#7b889c;--subtle:#1e2d3d;
+  /* Near-black, for text sitting ON one of the accents above. */
+  --ink:#16130a;
+  /* THE SECOND GREY EXISTS FOR TINTED CHIPS. A tint lightens the backdrop it
+     sits on, so --muted (which clears AA on the bare surfaces by 4.94) drops to
+     3.98 inside a 20% grey chip. Dropping the tint to 7% would fix the number
+     and throw away the thing the chip is FOR, so the text lightens instead. */
+  --muted-strong:#94a3b8;
   --cyan:#06b6d4;--pink:#ec4899;--emerald:#10b981;
   --card-hover-shadow:0 4px 24px rgba(0,0,0,.3),0 0 0 1px rgba(249,115,22,.15);
 }
@@ -45,7 +64,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 input.inp{background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'DM Mono',monospace;font-size:.9rem;padding:14px 18px;width:100%;outline:none;transition:border-color .2s,box-shadow .2s}
 input.inp:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(249,115,22,.12)}
 input.inp::placeholder{color:var(--muted)}
-button.btn{background:linear-gradient(135deg,var(--accent),#ea580c);color:white;border:none;border-radius:10px;font-family:'Bebas Neue',cursive;font-size:1.15rem;letter-spacing:1.5px;padding:14px 28px;cursor:pointer;transition:all .25s;width:100%;position:relative;overflow:hidden}
+button.btn{background:linear-gradient(135deg,var(--accent),#ea580c);color:var(--ink);border:none;border-radius:10px;font-family:'Bebas Neue',cursive;font-size:1.15rem;letter-spacing:1.5px;padding:14px 28px;cursor:pointer;transition:all .25s;width:100%;position:relative;overflow:hidden}
 button.btn:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(249,115,22,.45)}
 button.btn:active{transform:translateY(0)}
 button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
@@ -54,7 +73,7 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 #season-bar::-webkit-scrollbar{display:none}
 .season-btn{background:none;border:1px solid var(--border);border-radius:20px;color:var(--muted);font-family:'DM Mono',monospace;font-size:.72rem;padding:5px 14px;cursor:pointer;transition:all .2s;white-space:nowrap}
 .season-btn:hover{border-color:var(--accent);color:var(--text)}
-.season-btn.on{background:var(--accent);border-color:var(--accent);color:white;font-weight:500}
+.season-btn.on{background:var(--accent);border-color:var(--accent);color:var(--ink);font-weight:500}
 .season-label{font-family:'Bebas Neue',cursive;font-size:.85rem;letter-spacing:1px;color:var(--muted);flex-shrink:0}
 
 #tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:28px;overflow-x:auto;gap:2px;background:rgba(13,18,32,.5)}
@@ -74,7 +93,7 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 .spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
 .spinner-sm{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--purple);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
 
-.ava{border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--purple));display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',cursive;color:white;flex-shrink:0}
+.ava{border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--purple));display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',cursive;color:var(--ink);flex-shrink:0}
 .gtext{background:linear-gradient(90deg,var(--accent),var(--yellow));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .ptext{background:linear-gradient(90deg,var(--purple),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .ctext{background:linear-gradient(90deg,var(--cyan),var(--emerald));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
@@ -108,7 +127,7 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 .new-btn:hover{border-color:var(--accent);color:var(--text)}
 
 .week-btn{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-family:'Bebas Neue',cursive;font-size:.95rem;letter-spacing:1px;white-space:nowrap;transition:all .2s;color:var(--muted)}
-.week-btn.on{background:var(--accent);color:white;border-color:var(--accent)}
+.week-btn.on{background:var(--accent);color:var(--ink);border-color:var(--accent)}
 .week-btn:hover:not(.on){border-color:var(--accent);color:var(--text)}
 #week-bar{display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;margin-bottom:20px}
 #week-bar::-webkit-scrollbar{display:none}
@@ -124,7 +143,7 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 .feat-pill:hover{border-color:rgba(249,115,22,.3);background:rgba(249,115,22,.06)}
 .feat-pills{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:640px}
 .champ-crown{display:inline-flex;align-items:center;gap:6px;background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.3);border-radius:20px;padding:3px 10px;font-size:.72rem;color:var(--yellow);font-family:'DM Mono',monospace}
-.finalist-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(100,116,139,.12);border:1px solid rgba(100,116,139,.3);border-radius:20px;padding:3px 10px;font-size:.72rem;color:var(--muted);font-family:'DM Mono',monospace}
+.finalist-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(100,116,139,.12);border:1px solid rgba(100,116,139,.3);border-radius:20px;padding:3px 10px;font-size:.72rem;color:var(--muted-strong);font-family:'DM Mono',monospace}
 .season-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;transition:border-color .25s}
 .season-card:hover{border-color:rgba(168,85,247,.4)}
 
@@ -139,12 +158,12 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 .player-chip{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:4px 12px 4px 4px;font-size:.78rem;transition:border-color .2s}
 .player-chip:hover{border-color:var(--accent)}
 .player-pos{font-family:'DM Mono',monospace;font-size:.55rem;padding:2px 6px;border-radius:4px;font-weight:600;line-height:1}
-.pos-qb{background:rgba(239,68,68,.2);color:var(--red)}
-.pos-rb{background:rgba(34,197,94,.2);color:var(--green)}
-.pos-wr{background:rgba(59,130,246,.2);color:var(--blue)}
-.pos-te{background:rgba(168,85,247,.2);color:var(--purple)}
-.pos-k{background:rgba(234,179,8,.2);color:var(--yellow)}
-.pos-def{background:rgba(100,116,139,.2);color:var(--muted)}
+.pos-qb{background:rgba(239,68,68,.12);color:var(--red)}
+.pos-rb{background:rgba(34,197,94,.12);color:var(--green)}
+.pos-wr{background:rgba(59,130,246,.12);color:var(--blue)}
+.pos-te{background:rgba(168,85,247,.12);color:var(--purple)}
+.pos-k{background:rgba(234,179,8,.12);color:var(--yellow)}
+.pos-def{background:rgba(100,116,139,.2);color:var(--muted-strong)}
 
 .tab.myteam{color:var(--emerald)}
 .tab.myteam.on{color:var(--emerald);border-bottom-color:var(--emerald)}
@@ -164,15 +183,15 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 .player-info{flex:1;min-width:0;overflow:hidden}
 .player-name{font-weight:600;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .player-meta{display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap}
-.player-news-link{display:inline-flex;align-items:center;gap:4px;font-size:.65rem;color:var(--muted);text-decoration:none;padding:2px 8px;border-radius:4px;background:rgba(29,155,240,.08);border:1px solid rgba(29,155,240,.2);transition:all .2s;cursor:pointer;flex-shrink:0}
+.player-news-link{display:inline-flex;align-items:center;gap:4px;font-size:.65rem;color:var(--muted-strong);text-decoration:none;padding:2px 8px;border-radius:4px;background:rgba(29,155,240,.08);border:1px solid rgba(29,155,240,.2);transition:all .2s;cursor:pointer;flex-shrink:0}
 .player-news-link:hover{background:rgba(29,155,240,.15);color:var(--blue);border-color:rgba(29,155,240,.4)}
 .team-grade{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:10px;font-family:'Bebas Neue',cursive;font-size:1.5rem;flex-shrink:0}
 .injury-badge{font-family:'DM Mono',monospace;font-size:.55rem;padding:2px 7px;border-radius:4px;font-weight:600;letter-spacing:.5px}
-.injury-q{background:rgba(234,179,8,.2);color:var(--yellow)}
-.injury-d{background:rgba(234,179,8,.25);color:var(--yellow)}
-.injury-o{background:rgba(239,68,68,.2);color:var(--red)}
+.injury-q{background:rgba(234,179,8,.12);color:var(--yellow)}
+.injury-d{background:rgba(234,179,8,.12);color:var(--yellow)}
+.injury-o{background:rgba(239,68,68,.12);color:var(--red)}
 .injury-ir{background:rgba(239,68,68,.25);color:var(--red)}
-.injury-sus{background:rgba(168,85,247,.2);color:var(--purple)}
+.injury-sus{background:rgba(168,85,247,.12);color:var(--purple)}
 .news-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;transition:all .25s}
 .news-card:hover{border-color:rgba(16,185,129,.4)}
 .news-timestamp{font-family:'DM Mono',monospace;font-size:.6rem;color:var(--muted)}
@@ -2172,9 +2191,9 @@ function renderTrade(s){
     const total=aVal+bVal||1;
     const barW=el('div',{style:{display:'flex',gap:'3px',height:'28px',borderRadius:'8px',overflow:'hidden',marginBottom:'6px'}});
     const bA=el('div',{style:{width:((aVal/total)*100)+'%',background:'linear-gradient(90deg,var(--accent),rgba(249,115,22,.5))',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'6px 0 0 6px',minWidth:'40px'}});
-    bA.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color:'white'}},fmt(aVal,0)));
+    bA.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color:'var(--ink)'}},fmt(aVal,0)));
     const bB=el('div',{style:{width:((bVal/total)*100)+'%',background:'linear-gradient(90deg,rgba(168,85,247,.5),var(--purple))',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'0 6px 6px 0',minWidth:'40px'}});
-    bB.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color:'white'}},fmt(bVal,0)));
+    bB.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color:'var(--ink)'}},fmt(bVal,0)));
     barW.appendChild(bA);barW.appendChild(bB);vc.appendChild(barW);
 
     const lbl=el('div',{style:{display:'flex',justifyContent:'space-between',marginBottom:'18px'}});
@@ -2648,7 +2667,7 @@ function renderMyTeam(s){
     // Input area
     const inputArea=el('div',{style:{display:'flex',gap:'8px',padding:'12px 16px',borderTop:'1px solid var(--border)',flexShrink:'0'}});
     const chatInput=el('input',{class:'inp',style:{flex:'1',fontSize:'.82rem',padding:'10px 14px'},placeholder:'Ask about trades, waivers, start/sit...'});
-    const sendBtn=el('button',{style:{background:'var(--purple)',color:'white',border:'none',borderRadius:'8px',padding:'10px 18px',cursor:'pointer',fontFamily:"'Bebas Neue',cursive",fontSize:'.95rem',letterSpacing:'1px',transition:'all .2s',flexShrink:'0'}});
+    const sendBtn=el('button',{style:{background:'var(--purple)',color:'var(--ink)',border:'none',borderRadius:'8px',padding:'10px 18px',cursor:'pointer',fontFamily:"'Bebas Neue',cursive",fontSize:'.95rem',letterSpacing:'1px',transition:'all .2s',flexShrink:'0'}});
     sendBtn.textContent='SEND';
     sendBtn.onmouseenter=()=>{sendBtn.style.background='#9333ea';};
     sendBtn.onmouseleave=()=>{sendBtn.style.background='var(--purple)';};

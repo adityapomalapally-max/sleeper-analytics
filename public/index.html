@@ -2111,28 +2111,59 @@ function renderTrade(s){
     const absDiff=Math.abs(diff);
     const pctDiff=(aVal+bVal)>0?Math.round((absDiff/Math.max(aVal,bVal))*100):0;
 
-    // NO WINNER IS NAMED OVER PLAYERS THE DATA COULD NOT PRICE. An unranked
-    // player is not a small player — he is an unknown one, and a verdict that
-    // silently leaves him out is a verdict about a different trade. Same for a
-    // pick: nothing here prices one. The gap between what IS published is still
-    // shown, because that part is true.
-    const canJudge=unpricedPlayers===0&&picksInTrade===0;
+    // AN UNRANKED PLAYER IS NOT UNKNOWN — HE IS BOUNDED. The ranking is a
+    // complete top-N at each position, so a player left off it is below the
+    // last man on it, and that last man is worth very little: 4 points above
+    // replacement at receiver, nothing at all at quarterback. So instead of
+    // refusing to judge any trade containing one — which, measured against a
+    // real roster, is most trades — give the unpriced side the most it could
+    // possibly be worth and see whether the answer still holds.
+    //
+    // The bound is generous on purpose. It can only ever overstate the unknown
+    // side, so a verdict that survives it is safe.
+    const ceil=(G.values&&G.values.unrankedCeiling)||{};
+    const headroom=(list)=>sumOf(list.map(p=>ceil[p.pos]!==undefined?ceil[p.pos]:Infinity));
+    const aHead=headroom(aUnpriced), bHead=headroom(bUnpriced);
+    // Which side would the unknowns have to rescue?
+    const trailingHeadroom=diff>0?bHead:aHead;
+    const boundedDecides=absDiff>trailingHeadroom;
+
+    // Picks stay unjudgeable and are not bounded: a first-round rookie pick can
+    // become anything, and there is no ranked list it is missing from.
+    const canJudge=picksInTrade===0&&(unpricedPlayers===0||boundedDecides);
     let verdict,vColor;
     if(!canJudge){
       verdict='NOT A COMPLETE PICTURE';vColor='var(--muted)';
-    }else if(pctDiff<=8){verdict='FAIR TRADE';vColor='var(--green)';}
+    }else if(pctDiff<=8&&unpricedPlayers===0){verdict='FAIR TRADE';vColor='var(--green)';}
     else if(diff>0){verdict=teamB.name+' WINS';vColor='var(--yellow)';}
     else{verdict=teamA.name+' WINS';vColor='var(--yellow)';}
 
     const vc=el('div',{class:'card',style:{marginTop:'24px',padding:'24px',background:'linear-gradient(180deg,var(--card),rgba(17,24,39,.8))',border:'1px solid rgba(234,179,8,.2)'}});
     vc.appendChild(el('div',{class:'bb',style:{fontSize:'1.8rem',color:vColor,textAlign:'center',letterSpacing:'3px',marginBottom:'4px'}},verdict));
+    const noteStyle={textAlign:'center',fontSize:'.68rem',color:'var(--muted)',marginBottom:'14px',lineHeight:'1.7',maxWidth:'580px',marginLeft:'auto',marginRight:'auto'};
     if(!canJudge){
       const bits=[];
       if(unpricedPlayers)bits.push(unpricedPlayers+' player'+(unpricedPlayers===1?'':'s')+' with no published value ('
         +[...aUnpriced,...bUnpriced].map(p=>p.nm).join(', ')+')');
       if(picksInTrade)bits.push(picksInTrade+' draft pick'+(picksInTrade===1?'':'s')+', which nothing here prices');
-      vc.appendChild(el('div',{class:'mn',style:{textAlign:'center',fontSize:'.68rem',color:'var(--muted)',marginBottom:'14px',lineHeight:'1.7',maxWidth:'560px',marginLeft:'auto',marginRight:'auto'}},
+      vc.appendChild(el('div',{class:'mn',style:noteStyle},
         'This trade includes '+bits.join(' and ')+'. The gap below is over the players that ARE priced; who wins is not something this data can say.'));
+    }else if(unpricedPlayers){
+      // The verdict survived, and WHY it survived is one of two different
+      // things. Saying the wrong one is its own small lie: when the unpriced
+      // players sit on the side already giving more, the ceiling is irrelevant
+      // — they can only widen the gap — and quoting a bound of "0 pts" there
+      // reads as though the calculator had valued them at nothing.
+      const names=[...aUnpriced,...bUnpriced].map(p=>p.nm).join(', ');
+      const trailingUnpriced=diff>0?bUnpriced.length:aUnpriced.length;
+      vc.appendChild(el('div',{class:'mn',style:noteStyle},
+        trailingUnpriced===0
+          ? unpricedPlayers+' player'+(unpricedPlayers===1?'':'s')+' here ('+names+') '
+            +(unpricedPlayers===1?'has':'have')+' no published value, but '+(unpricedPlayers===1?'he is':'they are')
+            +' on the side already giving more — counting '+(unpricedPlayers===1?'him':'them')+' can only widen this gap, never close it.'
+          : unpricedPlayers+' player'+(unpricedPlayers===1?' has':'s have')+' no published value ('+names
+            +'). Even valued at the most an unranked player at that position could be worth — '
+            +fmt(trailingHeadroom,0)+' pts, the last man ranked there — the result does not change.'));
     }
     if(absDiff>0)vc.appendChild(el('div',{class:'mn',style:{textAlign:'center',fontSize:'.72rem',color:'var(--muted)',marginBottom:'16px'}},
       (canJudge?'Value gap: ':'Gap over the priced players: ')+fmt(absDiff,0)+' pts above replacement ('+pctDiff+'%)'));

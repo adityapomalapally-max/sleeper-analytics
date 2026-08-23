@@ -23,7 +23,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const {
-  slotValues, replacementMedians, verifyAgainstOverall, REPLACEMENT_RANK,
+  slotValues, replacementMedians, verifyAgainstOverall, REPLACEMENT_RANK, unrankedCeilingFrom,
 } = require('../lib/values');
 
 // A miniature of the real shape: three ranked backs whose hand order does NOT
@@ -114,4 +114,31 @@ test('a player with no ranked slot is absent, never zero', () => {
   const out = slotValues(noMedian, replacementMedians(PROJECTIONS));
   assert.ok(!out.some(p => p.name === 'No Projection'),
     'a player with no projected median was priced anyway');
+});
+
+test('an unranked player is bounded by the last man ranked at his position', () => {
+  // "No published value" is true and on its own useless: measured against a real
+  // 10-team keeper league, 83 of 189 rostered players are unranked, so refusing
+  // to judge any trade containing one refuses most trades. The ranking is a
+  // complete top-N, so a player left off it is below the last man on it — a
+  // ceiling, and a tight one.
+  const priced = slotValues(RANKINGS, replacementMedians(PROJECTIONS));
+  const ceiling = unrankedCeilingFrom(priced);
+  const worst = Math.min(...priced.map((p) => p.vorp));
+  assert.strictEqual(ceiling.RB, Math.max(0, worst),
+    'the ceiling should be the least valuable RANKED player at the position');
+});
+
+test('the ceiling is floored at zero, never negative', () => {
+  // A below-replacement player is droppable, so nobody trades him at a negative
+  // price. Flooring keeps the bound conservative in the only direction that is
+  // safe: it can overstate what the unknown side is worth, never understate it.
+  const belowReplacement = {
+    qb: [{ name: 'Backup', pos: 'QB', median: 100 }],   // far under the QB12 baseline
+    rb: [], wr: [], te: [], overall: [],
+  };
+  const priced = slotValues(belowReplacement, replacementMedians(PROJECTIONS));
+  assert.ok(priced[0].vorp < 0, 'this fixture should produce a negative VORP');
+  assert.strictEqual(unrankedCeilingFrom(priced).QB, 0,
+    'a negative ceiling would credit the unknown side with less than nothing');
 });

@@ -170,7 +170,7 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 
 /* My Team styles */
 .team-select-bar{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:20px}
-.team-select{background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'DM Mono',monospace;font-size:.82rem;padding:10px 14px;cursor:pointer;outline:none;flex:1;max-width:300px;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%2364748b' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+.team-select{background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'DM Mono',monospace;font-size:.82rem;padding:10px 14px;cursor:pointer;outline:none;flex:1;min-width:0;max-width:300px;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%2364748b' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
 .team-select option{background:var(--card);color:var(--text)}
 .roster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .player-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;transition:all .25s;display:flex;gap:12px;align-items:center;overflow:hidden;min-width:0}
@@ -229,6 +229,57 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
 @media(max-width:500px){
   .matchup-grid,.score-grid{grid-template-columns:1fr}
 }
+
+/* ═══ THE PHONE ═══════════════════════════════════════════════════════════
+   Last in the stylesheet on purpose: everything here overrides a rule defined
+   above it, and at equal specificity the later rule wins.
+
+   A FORM CONTROL UNDER 16px ZOOMS iOS ON FOCUS, and does not zoom back out
+   when the field is blurred. Measured here: the controls were 14.4px and
+   13.1px, and the smallest of them is the league-ID field — the first thing
+   anybody touches, on the only screen that exists before the app has any data.
+   Tapping it left the reader magnified and scrolled sideways with no way back.
+   The fix is the font size and nothing else; a maximum-scale viewport tag
+   would "fix" it by taking pinch-zoom away from everyone. */
+@media(max-width:768px){
+  input.inp,.team-select,input,select,textarea{font-size:16px}
+  /* 16px is bigger than the mono face was set at, so the padding gives a
+     little back rather than the control growing on a screen that has none. */
+  .team-select{padding:9px 12px}
+}
+
+/* 44px is the floor for anything a thumb has to hit. min-height with flex
+   centring rather than more padding, because padding has to be recomputed
+   every time a font size changes and this does not. */
+@media(pointer:coarse),(max-width:768px){
+  .season-btn,.new-btn,.team-select,.tab,.week-btn{
+    min-height:44px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+  }
+  /* The tab strip is eleven items and 1,185px wide against a 366px screen, so
+     it is a horizontal scroller on a phone whether or not anyone intended it.
+     Momentum scrolling and a scroll-snap make that deliberate rather than
+     accidental, and the padding stops the last tab sitting flush against the
+     edge where it reads as cut off rather than as scrollable. */
+  #tabs{
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scroll-snap-type:x proximity;
+    scrollbar-width:none;
+    padding-right:16px;
+  }
+  #tabs::-webkit-scrollbar{display:none}
+  #tabs .tab{scroll-snap-align:start}
+}
+
+@media(max-width:700px){
+  /* Side by side, each column is 149px and every name truncates. Stacked, the
+     rows are full width and readable — and the swap control becomes a divider
+     between the two halves rather than a column of its own. */
+  .trade-grid{grid-template-columns:1fr!important}
+}
 </style>
 </head>
 <body>
@@ -256,7 +307,13 @@ button.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none
     <div id="landing">
       <div style="display:flex;flex-direction:column;align-items:center;gap:48px;padding-top:48px;position:relative">
         <!-- Subtle radial glow behind hero -->
-        <div style="position:absolute;top:-60px;left:50%;transform:translateX(-50%);width:600px;height:400px;background:radial-gradient(ellipse,rgba(249,115,22,.08) 0%,rgba(168,85,247,.04) 40%,transparent 70%);pointer-events:none;z-index:0"></div>
+        <!-- DECORATION MUST NOT SET THE PAGE WIDTH. This glow is 600px wide and
+             centred with translateX(-50%), so on a 390px phone it hung 105px past
+             the right edge and scrolled the whole document sideways — on the
+             landing page, which is the only screen that exists before anyone has
+             loaded a league. It is capped to the space available now; nothing
+             about a background blur needs to be wider than the screen. -->
+        <div style="position:absolute;top:-60px;left:50%;transform:translateX(-50%);width:min(600px,100%);height:400px;background:radial-gradient(ellipse,rgba(249,115,22,.08) 0%,rgba(168,85,247,.04) 40%,transparent 70%);pointer-events:none;z-index:0"></div>
         <div style="text-align:center;position:relative;z-index:1">
           <div class="mn fu" style="font-size:.65rem;color:var(--accent);letter-spacing:4px;text-transform:uppercase;margin-bottom:14px;opacity:.8">Powered by Sleeper API</div>
           <div class="bb fu1" style="font-size:clamp(3rem,8vw,5.5rem);line-height:.9;margin-bottom:16px"><span class="gtext">YOUR LEAGUE.</span><br><span>DECODED.</span></div>
@@ -843,6 +900,11 @@ function setTab(name){
     const on=t.dataset.tab===name;
     t.classList.toggle('on',on);
     t.setAttribute('aria-selected',String(on));
+    // ELEVEN TABS IN A 366px STRIP. Most of them are off screen on a phone, so
+    // the one that is current has to be brought into view — otherwise tapping
+    // the last tab scrolls the panel and leaves the selection somewhere the
+    // reader cannot see, which reads as nothing having happened.
+    if(on&&t.scrollIntoView)t.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});
   });
   const panel=$('tab-content');
   if(panel){
@@ -2126,8 +2188,15 @@ function renderTrade(s){
       });
       pickSec.appendChild(chips);
     }
-    const addRow=el('div',{style:{display:'flex',gap:'6px'}});
-    const pickSel=el('select',{class:'team-select',style:{flex:'1',fontSize:'.72rem',padding:'7px 10px'}});
+    // min-width:0 or the select refuses to shrink below its own content width
+    // and pushes the ADD button off the screen — which is what the 16px font
+    // did on a phone: the row went 20px past the edge and took the document
+    // with it. A flex child's default min-width is auto, not zero.
+    const addRow=el('div',{style:{display:'flex',gap:'6px',minWidth:'0'}});
+    // NO INLINE font-size. An inline style beats the stylesheet from anywhere,
+    // so this select stayed at 11.5px while every other control moved to 16 —
+    // and 11.5px is exactly the size that makes iOS zoom on focus.
+    const pickSel=el('select',{class:'team-select',style:{flex:'1',minWidth:'0'}});
     pickSel.appendChild(el('option',{value:''},'Add pick...'));
     for(let r=1;r<=14;r++)pickSel.appendChild(el('option',{value:String(r)},'Round '+r));
     addRow.appendChild(pickSel);
@@ -2143,12 +2212,18 @@ function renderTrade(s){
   }
 
   // Two-column layout
-  const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 40px 1fr',gap:'12px',alignItems:'start'}});
+  // The class is what the phone breakpoint reaches: at 390px the two columns
+  // come out 149px each and every player name truncates to "J. Gib...", which
+  // is unusable for the one tool on this site that is entirely about comparing
+  // named players. It stacks below 700px.
+  const grid=el('div',{class:'trade-grid',style:{display:'grid',gridTemplateColumns:'1fr 44px 1fr',gap:'12px',alignItems:'start'}});
   grid.appendChild(buildSide('TEAM A',ts.teamA,pvA,ts.playersA,ts.picksA,'A','var(--accent)'));
 
   // Center swap
   const mid=el('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',paddingTop:'52px'}});
-  const swapBtn=el('div',{style:{width:'34px',height:'34px',borderRadius:'50%',background:'var(--surface)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:'1rem',transition:'all .2s'}});
+  // 44px, like every other control a thumb has to find. It is also the only
+  // way to swap the two sides of a trade, so it is not a control to make small.
+  const swapBtn=el('div',{'aria-label':'Swap the two sides of this trade',style:{width:'44px',height:'44px',borderRadius:'50%',background:'var(--surface)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:'1rem',transition:'all .2s'}});
   swapBtn.textContent='⇄';
   swapBtn.onmouseover=()=>{swapBtn.style.borderColor='var(--yellow)';swapBtn.style.transform='scale(1.15)';};
   swapBtn.onmouseout=()=>{swapBtn.style.borderColor='var(--border)';swapBtn.style.transform='scale(1)';};
@@ -2465,7 +2540,8 @@ function renderMyTeam(s){
   const subBar=el('div',{style:{display:'flex',gap:'4px',padding:'10px 0',borderBottom:'1px solid var(--border)',marginBottom:'16px',overflowX:'auto'}});
   const subContent=el('div');
   subTabs.forEach(st=>{
-    const btn=el('button',{style:{background:G._myTeamSubTab===st.id?'var(--surface)':'none',border:G._myTeamSubTab===st.id?'1px solid '+st.c+'55':'1px solid transparent',borderRadius:'8px',color:G._myTeamSubTab===st.id?st.c:'var(--muted)',fontFamily:"'DM Mono',monospace",fontSize:'.72rem',padding:'8px 16px',cursor:'pointer',transition:'all .2s',whiteSpace:'nowrap'}});
+    // 44px: these are the My Team navigation and they were 34.
+    const btn=el('button',{style:{background:G._myTeamSubTab===st.id?'var(--surface)':'none',border:G._myTeamSubTab===st.id?'1px solid '+st.c+'55':'1px solid transparent',borderRadius:'8px',color:G._myTeamSubTab===st.id?st.c:'var(--muted)',fontFamily:"'DM Mono',monospace",fontSize:'.72rem',padding:'8px 16px',minHeight:'44px',cursor:'pointer',transition:'all .2s',whiteSpace:'nowrap'}});
     btn.textContent=st.label;
     btn.onmouseenter=()=>{if(G._myTeamSubTab!==st.id)btn.style.color='var(--text)';};
     btn.onmouseleave=()=>{if(G._myTeamSubTab!==st.id)btn.style.color='var(--muted)';};
@@ -2723,7 +2799,10 @@ function renderMyTeam(s){
 
     // Input area
     const inputArea=el('div',{style:{display:'flex',gap:'8px',padding:'12px 16px',borderTop:'1px solid var(--border)',flexShrink:'0'}});
-    const chatInput=el('input',{class:'inp',style:{flex:'1',fontSize:'.82rem',padding:'10px 14px'},placeholder:'Ask about trades, waivers, start/sit...'});
+    // No inline font-size: it beats the stylesheet, and 13.1px is the size that
+    // makes iOS zoom on focus. This is a chat box — the one control on the page
+    // somebody is guaranteed to type into.
+    const chatInput=el('input',{class:'inp',style:{flex:'1',minWidth:'0',padding:'10px 14px'},placeholder:'Ask about trades, waivers, start/sit...'});
     const sendBtn=el('button',{style:{background:'var(--purple)',color:'var(--ink)',border:'none',borderRadius:'8px',padding:'10px 18px',cursor:'pointer',fontFamily:"'Bebas Neue',cursive",fontSize:'.95rem',letterSpacing:'1px',transition:'all .2s',flexShrink:'0'}});
     sendBtn.textContent='SEND';
     sendBtn.onmouseenter=()=>{sendBtn.style.background='#9333ea';};

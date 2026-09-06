@@ -20,8 +20,14 @@ export function middleware(request) {
     'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()'
   );
 
-  // XSS Protection (legacy browsers)
-  response.headers.set('X-XSS-Protection', '1; mode=block');
+  // X-XSS-Protection is set to 0 ON PURPOSE, which looks backwards and is not.
+  // The legacy auditor this header enables was retired because its filtering
+  // could itself be turned into a vulnerability — it could be induced to strip
+  // parts of a page and create an injection that was not there in the original
+  // response. Modern browsers ignore the header; the ones that honour it are
+  // safer with it off. `1; mode=block` is the value that reads reassuring and
+  // is the one worth removing.
+  response.headers.set('X-XSS-Protection', '0');
 
   // Content Security Policy
   // - 'self' for scripts/styles/fonts from your own domain
@@ -44,6 +50,12 @@ export function middleware(request) {
       "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",
+      // Nothing here embeds a plugin, and object/embed is a classic way to run
+      // script past a policy that only thought about <script>.
+      "object-src 'none'",
+      // Any absolute http:// URL that survives in the markup gets fetched over
+      // https instead of silently going out in the clear.
+      "upgrade-insecure-requests",
     ].join('; ')
   );
 

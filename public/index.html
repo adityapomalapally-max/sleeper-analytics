@@ -1159,43 +1159,130 @@ function renderStandings(s){
    POWER RANKINGS
    ═══════════════════════════════════════════════════════════════════════════ */
 function renderPower(s){
-  const enriched=s.teams.map(t=>{
-    const scores=t.weeklyScores.filter(v=>v>0);const avg=avgOf(scores);
-    const total=t.wins+t.losses+(t.ties||0);const wp=total?t.wins/total:0;
-    const stddev=scores.length>1?Math.sqrt(scores.reduce((sum,v)=>sum+Math.pow(v-avg,2),0)/scores.length):0;
-    const consistency=avg>0?Math.max(0,100-(stddev/avg)*100):0;
-    return{...t,avg,wp,consistency,validWeeks:scores.length};
-  });
-  const maxAvg=maxOf(enriched.map(t=>t.avg),1);const maxC=maxOf(enriched.map(t=>t.consistency),1);
-  const ranked=enriched.map(t=>{
-    const recent=t.weeklyScores.filter(v=>v>0).slice(-3);const rAvg=avgOf(recent);
-    const rB=maxAvg>0?(rAvg/maxAvg)*10:0;
-    return{...t,power:parseFloat((t.wp*40+(t.avg/maxAvg)*35+(t.consistency/maxC)*15+rB).toFixed(1))};
-  }).sort((a,b)=>b.power-a.power);
+  // Returns synchronously and fills in behind a spinner — renderTab does
+  // c.appendChild(fn[name](s)), so an async function here would hand it a
+  // Promise and leave the tab blank.
   const wrap=el('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}});
+  const loading=el('div',{class:'cardh',style:{display:'flex',alignItems:'center',gap:'10px',padding:'18px'}});
+  loading.appendChild(el('div',{class:'spinner-sm'}));
+  loading.appendChild(el('span',{class:'mn',style:{fontSize:'.75rem',color:'var(--muted)'}},'Computing all-play and strength of schedule…'));
+  wrap.appendChild(loading);
+  fillPower(wrap,loading,s);
+  return wrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   POWER RANKINGS — all-play, and nothing else
+
+   WHAT WAS HERE: winPct*40 + avg*35 + consistency*15 + recent3*10, and this
+   tab printed those weights to the reader as though they were findings.
+   scripts/calibrate-power.js measured all four against what actually happened
+   next, over 440 team-splits and four seasons. Consistency correlates -0.016
+   with future wins. Recent form fits NEGATIVE once a shrunk scoring average is
+   in the model — "hot" is the part of the last three weeks that was noise.
+
+   A fitted replacement was tried and declined: it won in sample and disagreed
+   with itself per season, and it put a 4-3 team above the 7-0 team at week 7
+   of 2025 (the 7-0 team then won 86% of what was left). See lib/power.js.
+
+   So the score is ALL-PLAY: the record a team would have if it played everyone
+   every week. Strength of schedule sits beside it as a fact about the fixtures
+   rather than a weight somebody chose.
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function fillPower(wrap,loading,s){
+  let d;
+  try{
+    const r=await fetch('/api/power?league='+encodeURIComponent(s.leagueId));
+    d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.detail||d.error||('HTTP '+r.status));
+  }catch(e){
+    loading.remove();
+    const err=el('div',{class:'cardh',style:{padding:'18px',borderLeft:'3px solid var(--red)'}});
+    err.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'6px'}},'The rankings could not be computed'));
+    err.appendChild(el('div',{class:'mn',style:{fontSize:'.72rem',color:'var(--muted)'}},String(e.message)));
+    wrap.appendChild(err);
+    return;
+  }
+  loading.remove();
+
   const info=el('div',{class:'info-box fu'});
-  info.innerHTML='<span style="color:var(--accent);font-weight:600">Power Score</span> = Record (40%) + Avg Scoring (35%) + Consistency (15%) + Recent Form (10%)';
+  info.innerHTML='<span style="color:var(--accent);font-weight:600">All-Play</span> = the record you\u2019d have if you played <em>every</em> team every week \u2014 the standings with the schedule\u2019s luck removed. '
+    +'<span style="color:var(--muted)">Luck</span> is how far your actual record sits above it.';
   wrap.appendChild(info);
-  ranked.forEach((t,i)=>{
-    const rc=rankColor(i+1,ranked.length);const hi=t.weeklyScores.filter(v=>v>0).length?maxOf(t.weeklyScores.filter(v=>v>0)):0;
-    const row=el('div',{class:'cardh team-row',style:{animationDelay:(i*.05)+'s'}});
-    const inner=el('div',{style:{display:'flex',alignItems:'center',gap:'14px',flexWrap:'wrap'}});
-    const badge=el('div',{style:{width:'28px',height:'28px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',background:rc+'22',border:'1px solid '+rc+'55',flexShrink:'0'}});
-    badge.appendChild(el('span',{class:'bb',style:{fontSize:'.9rem',color:rc}},String(i+1)));
-    inner.appendChild(badge);inner.appendChild(makeAvatar(t.name,t.avatar,36));
-    const info2=el('div',{style:{flex:'1',minWidth:'140px'}});
-    info2.appendChild(el('div',{style:{fontWeight:'500',fontSize:'.88rem',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:'6px'}},t.name));
+
+  if(!d.reliable){
+    const warn=el('div',{class:'cardh',style:{padding:'14px 16px',borderLeft:'3px solid var(--red)',background:'rgba(239,68,68,.06)'}});
+    warn.appendChild(el('div',{class:'bb',style:{fontSize:'.7rem',letterSpacing:'1px',color:'var(--red)',marginBottom:'6px'}},'NOT A RANKING YET'));
+    warn.appendChild(el('div',{style:{fontSize:'.82rem',lineHeight:'1.5'}},
+      d.weeksPlayed===0?'Nothing has been played, so every team is exactly average.':'One week is a scoreboard, not a ranking.'));
+    wrap.appendChild(warn);
+  }
+
+  d.teams.forEach((t,i)=>{
+    const rc=rankColor(i+1,d.teams.length);
+    const row=el('div',{class:'cardh team-row',style:{animationDelay:(i*.04)+'s'}});
+    const inner=el('div',{style:{display:'flex',alignItems:'center',gap:'14px'}});
+
+    const badge=el('div',{style:{width:'26px',height:'26px',borderRadius:'50%',display:'flex',alignItems:'center',
+      justifyContent:'center',background:rc+'22',border:'1px solid '+rc+'55',flexShrink:'0'}});
+    badge.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color:rc}},String(i+1)));
+    inner.appendChild(badge);
+    inner.appendChild(makeAvatar(t.name,t.avatar));
+
+    const info2=el('div',{style:{flex:'1',minWidth:'0'}});
+    const nr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'6px'}});
+    nr.appendChild(el('span',{style:{fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.name));
+    nr.appendChild(el('span',{class:'mn',style:{fontSize:'.65rem',color:'var(--muted)',flexShrink:'0'}},t.record));
+    // A record well above or below all-play is the story of the team's season.
+    if(Math.abs(t.luck)>=0.12){
+      const lucky=t.luck>0;
+      nr.appendChild(el('span',{class:'mn',style:{fontSize:'.6rem',flexShrink:'0',padding:'1px 6px',borderRadius:'4px',
+        background:lucky?'rgba(234,179,8,.15)':'rgba(59,130,246,.15)',
+        color:lucky?'var(--yellow)':'var(--blue,#60a5fa)',
+        border:'1px solid '+(lucky?'rgba(234,179,8,.3)':'rgba(59,130,246,.3)')}},
+        lucky?'FLATTERED':'ROBBED'));
+    }
+    info2.appendChild(nr);
+
     const bw=el('div',{style:{display:'flex',alignItems:'center',gap:'8px'}});
     const bg=el('div',{style:{flex:'1',background:'var(--border)',borderRadius:'4px',height:'6px',overflow:'hidden'}});
-    bg.appendChild(el('div',{style:{width:Math.min(t.power,100)+'%',height:'100%',background:'linear-gradient(90deg,'+rc+','+rc+'88)',borderRadius:'4px',transition:'width 1s'}}));
-    bw.appendChild(bg);bw.appendChild(el('span',{class:'bb',style:{fontSize:'1.1rem',color:rc,minWidth:'32px'}},String(t.power)));
-    info2.appendChild(bw);inner.appendChild(info2);
-    const pills=el('div',{class:'pills-row',style:{display:'flex',gap:'14px',flexShrink:'0',flexWrap:'wrap'}});
-    pills.appendChild(makePill('Record',t.wins+'-'+t.losses,'var(--text)'));
-    pills.appendChild(makePill('Avg',fmt(t.avg),'var(--accent)'));pills.appendChild(makePill('Hi',fmt(hi),'var(--yellow)'));
-    inner.appendChild(pills);row.appendChild(inner);wrap.appendChild(row);
+    bg.appendChild(el('div',{style:{width:(t.allPlayPct*100)+'%',height:'100%',
+      background:'linear-gradient(90deg,'+rc+','+rc+'88)',borderRadius:'4px',transition:'width 1s'}}));
+    bw.appendChild(bg);
+    bw.appendChild(el('span',{class:'bb',style:{fontSize:'.85rem',color:rc,whiteSpace:'nowrap',minWidth:'44px',textAlign:'right'}},
+      (t.allPlayPct*100).toFixed(0)+'%'));
+    info2.appendChild(bw);
+    inner.appendChild(info2);
+
+    const sosTxt=(v)=>v==null?'\u2014':(v>=0?'+':'')+v.toFixed(1);
+    const sosCol=(v)=>v==null?'var(--muted)':v>0.7?'var(--red)':v<-0.7?'var(--green)':'var(--muted)';
+    const pills=el('div',{class:'pills-row',style:{display:'flex',gap:'16px',flexShrink:'0',flexWrap:'wrap'}});
+    pills.appendChild(makePill('Pts/wk',t.expectedScore.toFixed(1),'var(--text)'));
+    pills.appendChild(makePill('Luck',(t.luck>0?'+':'')+(t.luck*100).toFixed(0),
+      Math.abs(t.luck)<0.08?'var(--muted)':t.luck>0?'var(--yellow)':'var(--green)'));
+    // Positive = harder than average. Red for hard, green for easy.
+    pills.appendChild(makePill('SoS played',sosTxt(t.sosFacedDelta),sosCol(t.sosFacedDelta)));
+    pills.appendChild(makePill('SoS left',sosTxt(t.sosLeftDelta),sosCol(t.sosLeftDelta)));
+    inner.appendChild(pills);
+
+    row.appendChild(inner);
+    wrap.appendChild(row);
   });
-  return wrap;
+
+  const foot=el('div',{class:'cardh',style:{padding:'14px 16px',marginTop:'6px'}});
+  foot.appendChild(el('div',{class:'bb',style:{fontSize:'.68rem',letterSpacing:'1px',color:'var(--accent)',marginBottom:'8px'}},'HOW THIS IS CALCULATED'));
+  [
+    'All-play: your score against every other score, every week. Ties count as half.',
+    'Strength of schedule is points per week away from the league average of '+d.leagueMean+' \u2014 positive means harder. Opponent quality is shrunk toward the league so a hot four-week sample does not read as a good team.',
+    'It is reported, not scored: folding it in means choosing a weight, and measured over four seasons the data could not choose one.',
+    'The old formula weighted Consistency 15% and Recent Form 10%. Measured against what happened next, consistency correlates \u22120.016 with future wins and recent form is negative once scoring is known. Both are gone.',
+  ].forEach(t=>{
+    const li=el('div',{style:{display:'flex',gap:'8px',marginBottom:'5px'}});
+    li.appendChild(el('span',{style:{color:'var(--accent)',flexShrink:'0'}},'\u2022'));
+    li.appendChild(el('span',{style:{fontSize:'.74rem',color:'var(--muted)',lineHeight:'1.5'}},t));
+    foot.appendChild(li);
+  });
+  wrap.appendChild(foot);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

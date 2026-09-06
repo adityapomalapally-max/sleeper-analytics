@@ -392,6 +392,7 @@ const TABS=[
   {id:'playoffs',label:'🎯 Playoff Odds'},
   {id:'week',label:'📰 Weekly Report'},
   {id:'trade',label:'⚖️ Trade',cls:'trade'},
+  {id:'finder',label:'🔍 Trade Finder',cls:'trade'},
   {id:'myteam',label:'🏠 My Team',cls:'myteam'},
   {id:'recap',label:'🎬 Recap',cls:'recap'},
   {id:'whatif',label:'🔮 What-If',cls:'whatif'},
@@ -1221,10 +1222,126 @@ function erf(x){
   return sgn*(1-poly*Math.exp(-x*x));
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   TRADE FINDER
+
+   The Trade tab grades a deal somebody already thought of. This proposes ones
+   nobody has, and the idea behind it is that VORP is additive while lineups are
+   not: a third good running back is worth a lot on paper and almost nothing on
+   Sunday, because only two of them start. So a roster is worth its best legal
+   ELEVEN, and a trade is worth proposing when that number rises for both teams.
+
+   IT ONLY EVER OFFERS PLAYERS THAT CARRY A PUBLISHED VALUE. 88 of the pool are
+   priced and the rest are named, never estimated — that is lib/values.js's rule
+   and breaking it here to fill a page would be the same failure as the invented
+   keeper values this app already deleted once.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderFinder(s){
+  const wrap=el('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}});
+  wrap.appendChild(makeSectionHeader('🔍 Trade Finder','var(--green)'));
+  const loading=el('div',{class:'cardh',style:{display:'flex',alignItems:'center',gap:'10px',padding:'18px'}});
+  loading.appendChild(el('div',{class:'spinner-sm'}));
+  loading.appendChild(el('span',{class:'mn',style:{fontSize:'.75rem',color:'var(--muted)'}},'Searching every one-for-one and two-for-one…'));
+  wrap.appendChild(loading);
+  fillFinder(wrap,loading,s,G.finderRoster||null);
+  return wrap;
+}
+
+async function fillFinder(wrap,loading,s,forRoster){
+  G.finderRoster=forRoster;
+  let d;
+  try{
+    const q='/api/trades?league='+encodeURIComponent(s.leagueId)+(forRoster?'&roster='+forRoster:'');
+    const r=await fetch(q);
+    d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.detail||d.error||('HTTP '+r.status));
+  }catch(e){
+    loading.remove();
+    const err=el('div',{class:'cardh',style:{padding:'18px',borderLeft:'3px solid var(--red)'}});
+    err.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'6px'}},'The finder could not run'));
+    err.appendChild(el('div',{class:'mn',style:{fontSize:'.72rem',color:'var(--muted)'}},String(e.message)));
+    wrap.appendChild(err);
+    return;
+  }
+  loading.remove();
+
+  // WHOSE TRADES. Ranked league-wide the deepest roster owns every row, which
+  // is true and useless — the question a reader has is what THEY can do.
+  const pick=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'4px',alignItems:'center'}});
+  pick.appendChild(el('span',{class:'mn',style:{fontSize:'.68rem',color:'var(--muted)',marginRight:'2px'}},'FOR:'));
+  const mk=(label,rid)=>{
+    const on=(rid||null)===(forRoster||null);
+    const b=el('button',{class:'mn',style:{padding:'6px 11px',minHeight:'34px',borderRadius:'8px',cursor:'pointer',fontSize:'.72rem',
+      border:'1px solid '+(on?'var(--green)':'var(--border)'),background:on?'rgba(34,197,94,.14)':'transparent',
+      color:on?'var(--green)':'var(--muted)'}},label);
+    b.onclick=()=>{ wrap.innerHTML=''; wrap.appendChild(makeSectionHeader('🔍 Trade Finder','var(--green)'));
+      const l2=el('div',{class:'cardh',style:{display:'flex',alignItems:'center',gap:'10px',padding:'18px'}});
+      l2.appendChild(el('div',{class:'spinner-sm'}));
+      l2.appendChild(el('span',{class:'mn',style:{fontSize:'.75rem',color:'var(--muted)'}},'Searching…'));
+      wrap.appendChild(l2); fillFinder(wrap,l2,s,rid); };
+    return b;
+  };
+  pick.appendChild(mk('Everyone',null));
+  d.teams.forEach(t=>pick.appendChild(mk(t.name.length>16?t.name.slice(0,15)+'…':t.name,t.rosterId)));
+  wrap.appendChild(pick);
+
+  if(!d.trades.length){
+    const none=el('div',{class:'cardh',style:{padding:'18px',borderLeft:'3px solid var(--yellow)'}});
+    none.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'6px'}},'No trade here makes both teams better'));
+    none.appendChild(el('div',{style:{fontSize:'.8rem',color:'var(--muted)',lineHeight:'1.5'}},
+      'That is a real answer, not an empty page \u2014 among the '+d.coverage.ranked+' players carrying a published value, '
+      +'every swap that helps one side costs the other.'));
+    wrap.appendChild(none);
+  }
+
+  d.trades.forEach((t,i)=>{
+    const card=el('div',{class:'cardh',style:{padding:'14px 16px',animationDelay:(i*.03)+'s'}});
+    const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr auto 1fr',gap:'12px',alignItems:'center'}});
+
+    const side=(who,align)=>{
+      const c=el('div',{style:{minWidth:'0',textAlign:align}});
+      c.appendChild(el('div',{style:{fontWeight:'600',fontSize:'.85rem',marginBottom:'4px',
+        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},who.name));
+      who.gives.forEach(g=>c.appendChild(el('div',{class:'mn',style:{fontSize:'.72rem',color:'var(--muted)',
+        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},g.name+' ('+g.pos+')')));
+      c.appendChild(el('div',{class:'bb',style:{fontSize:'.8rem',color:'var(--green)',marginTop:'4px'}},'+'+who.gain.toFixed(0)));
+      return c;
+    };
+    grid.appendChild(side(t.a,'left'));
+    grid.appendChild(el('span',{style:{fontSize:'1.1rem',color:'var(--muted)'}},'\u21c4'));
+    grid.appendChild(side(t.b,'right'));
+    card.appendChild(grid);
+
+    if(t.uncertain){
+      card.appendChild(el('div',{class:'mn',style:{fontSize:'.66rem',color:'var(--yellow)',marginTop:'8px',
+        paddingTop:'8px',borderTop:'1px solid var(--border)'}},
+        '\u26a0 An unpriced player changes starting status here, so part of this rests on a ceiling rather than a measurement.'));
+    }
+    wrap.appendChild(card);
+  });
+
+  const foot=el('div',{class:'cardh',style:{padding:'14px 16px',marginTop:'6px'}});
+  foot.appendChild(el('div',{class:'bb',style:{fontSize:'.68rem',letterSpacing:'1px',color:'var(--accent)',marginBottom:'8px'}},'HOW THIS WORKS'));
+  [
+    'A roster is worth its best legal starting lineup in VORP, not the sum of everyone on it \u2014 a third good back only starts in the flex, so he is worth the gap over whoever he displaces.',
+    'A trade is listed only when BOTH lineups get better. The gain shown is per side, and the list is ordered by whichever side gains least, because that is the side that says no.',
+    'Only players carrying a published value are ever offered: '+d.coverage.ranked+' of '+d.coverage.pool+'. The other '+(d.coverage.pool-d.coverage.ranked)+' are named, never estimated.',
+    'An unpriced starter counts as zero. Measured, that is exact at QB and TE (ceiling 0) and small at WR (4); only RB (18) is big enough to matter, which is when the warning appears.',
+    'These are candidates, not verdicts. Take one to the Trade tab to see it judged with its bounds.',
+  ].forEach(x=>{
+    const li=el('div',{style:{display:'flex',gap:'8px',marginBottom:'5px'}});
+    li.appendChild(el('span',{style:{color:'var(--accent)',flexShrink:'0'}},'\u2022'));
+    li.appendChild(el('span',{style:{fontSize:'.74rem',color:'var(--muted)',lineHeight:'1.5'}},x));
+    foot.appendChild(li);
+  });
+  wrap.appendChild(foot);
+  promoteClickables(wrap);
+}
+
 function renderTab(name){
   const c=$('tab-content');c.innerHTML='';
   const s=G.seasons[G.currentSeasonIdx];
-  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,week:renderWeekly,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
+  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,week:renderWeekly,finder:renderFinder,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
 
   // The trade tab cannot render before the values are in hand — without them
   // every player reads as unpriced, which is true but useless while a fetch is

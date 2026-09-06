@@ -390,6 +390,7 @@ const TABS=[
   {id:'matchups',label:'Matchups'},
   {id:'h2h',label:'Head-to-Head'},
   {id:'playoffs',label:'🎯 Playoff Odds'},
+  {id:'week',label:'📰 Weekly Report'},
   {id:'trade',label:'⚖️ Trade',cls:'trade'},
   {id:'myteam',label:'🏠 My Team',cls:'myteam'},
   {id:'recap',label:'🎬 Recap',cls:'recap'},
@@ -1034,10 +1035,196 @@ async function fillPlayoffs(wrap,loading,s){
   wrap.appendChild(foot);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   WEEKLY REPORT
+
+   The Recap tab is a SEASON recap — season awards, the year's blowouts, the
+   year's nail-biters. This is the other thing: what happened in ONE week, and
+   what is coming in the next.
+   
+   THE AWARDS ARE THE POINT, and the useful ones are the ones a scoreboard
+   cannot tell you. Any site can print the highest score. Only the full week's
+   scores can tell you a 118 was the luckiest win of the week because it would
+   have lost to seven of the other nine teams, and only the bench can tell you
+   who left 34 points on it. calcOptimalScore already does the lineup maths for
+   the What-If tab; this reuses it a week at a time.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderWeekly(s){
+  const wrap=el('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}});
+  wrap.appendChild(loadingEl('LOADING PLAYER DATABASE','var(--cyan)'));
+  ensurePlayerDB().then(()=>{ wrap.innerHTML=''; fillWeekly(wrap,s,G.weeklyWeek||s.currentWeek); })
+    .catch(e=>{ wrap.innerHTML=''; wrap.appendChild(el('div',{class:'cardh',style:{padding:'18px'}},'Could not load the player database: '+e.message)); });
+  return wrap;
+}
+
+function fillWeekly(wrap,s,week){
+  G.weeklyWeek=week;
+  const rosterPos=s.rosterPositions||[];
+  const tMap={}; s.teams.forEach(t=>{tMap[t.rosterId]=t;});
+
+  wrap.appendChild(makeSectionHeader('📰 Week '+week+' Report','var(--cyan)'));
+
+  // Week picker. Only weeks that were actually played — an empty week is not a
+  // report, and offering it invites a page of dashes.
+  const weeks=Object.keys(s.matchupsByWeek).map(Number)
+    .filter(w=>(s.matchupsByWeek[w]||[]).some(m=>(m.points||0)>0)).sort((a,b)=>a-b);
+  const picker=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'4px'}});
+  weeks.forEach(w=>{
+    const on=w===week;
+    const b=el('button',{class:'mn',style:{padding:'6px 11px',minHeight:'34px',borderRadius:'8px',cursor:'pointer',
+      fontSize:'.72rem',border:'1px solid '+(on?'var(--cyan)':'var(--border)'),
+      background:on?'rgba(34,211,238,.15)':'transparent',color:on?'var(--cyan)':'var(--muted)'}},'W'+w);
+    b.onclick=()=>{ wrap.innerHTML=''; fillWeekly(wrap,s,w); };
+    picker.appendChild(b);
+  });
+  wrap.appendChild(picker);
+
+  const rows=(s.matchupsByWeek[week]||[]).filter(m=>(m.points||0)>0);
+  if(rows.length<2){
+    wrap.appendChild(el('div',{class:'cardh',style:{padding:'18px'}},'Week '+week+' has not been played.'));
+    return;
+  }
+
+  const scores=rows.map(m=>m.points).sort((a,b)=>b-a);
+  const byRoster={}; rows.forEach(m=>{byRoster[m.roster_id]=m;});
+
+  // How many of the other teams this score would have beaten. The whole basis
+  // of "lucky" and "robbed" — a win is only lucky relative to the week.
+  const beat=(pts)=>rows.filter(o=>o.points<pts).length;
+
+  const games=[];
+  const byMatchup={}; rows.forEach(m=>{(byMatchup[m.matchup_id]||=[]).push(m);});
+  Object.values(byMatchup).filter(g=>g.length===2).forEach(([a,b])=>{
+    const [w,l]=a.points>=b.points?[a,b]:[b,a];
+    games.push({w,l,margin:w.points-l.points});
+  });
+  games.sort((x,y)=>y.w.points-x.w.points);
+
+  // ---- the awards --------------------------------------------------------
+  const opt=(m)=>calcOptimalScore(m,rosterPos,G.playerDB);
+  const withOpt=rows.map(m=>({m,o:opt(m)}));
+
+  const hi=rows.reduce((a,b)=>a.points>b.points?a:b);
+  const lo=rows.reduce((a,b)=>a.points<b.points?a:b);
+  const luckiest=games.map(g=>({g,n:beat(g.w.points)})).sort((x,y)=>x.n-y.n)[0];
+  const robbed=games.map(g=>({g,n:beat(g.l.points)})).sort((x,y)=>y.n-x.n)[0];
+  const bench=withOpt.map(x=>({...x,left:x.o.optimal-x.m.points})).sort((a,b)=>b.left-a.left)[0];
+  const perfect=withOpt.filter(x=>x.o.optimal-x.m.points<0.01);
+
+  // Best individual start of the week.
+  let star=null;
+  rows.forEach(m=>{(m.starters||[]).forEach(id=>{
+    const pts=(m.players_points||{})[id];
+    if(pts!=null&&(!star||pts>star.pts))star={id,pts,rosterId:m.roster_id};
+  });});
+
+  const awards=[];
+  awards.push(['🔥','Highest score',tMap[hi.roster_id]?.name,fmt(hi.points,1)+' pts','var(--green)']);
+  awards.push(['💀','Lowest score',tMap[lo.roster_id]?.name,fmt(lo.points,1)+' pts','var(--red)']);
+  if(star)awards.push(['⭐','Player of the week',pName(star.id)+' ('+(tMap[star.rosterId]?.name||'')+')',fmt(star.pts,1)+' pts','var(--yellow)']);
+  if(luckiest&&luckiest.n<=Math.floor((rows.length-1)/2))
+    awards.push(['🍀','Luckiest win',tMap[luckiest.g.w.roster_id]?.name,
+      'won with a score that beat only '+luckiest.n+' of '+(rows.length-1),'var(--yellow)']);
+  if(robbed&&robbed.n>=Math.ceil((rows.length-1)/2))
+    awards.push(['😤','Robbed',tMap[robbed.g.l.roster_id]?.name,
+      'lost with a score that beat '+robbed.n+' of '+(rows.length-1),'var(--cyan)']);
+  if(bench&&bench.left>0.05)
+    awards.push(['🪑','Left on the bench',tMap[bench.m.roster_id]?.name,
+      fmt(bench.left,1)+' pts unplayed ('+fmt(100*bench.m.points/(bench.o.optimal||1),0)+'% efficient)','var(--red)']);
+  perfect.forEach(x=>awards.push(['🎯','Perfect lineup',tMap[x.m.roster_id]?.name,'started the best eleven available','var(--green)']));
+
+  wrap.appendChild(makeSectionHeader('🏅 Week '+week+' Awards','var(--yellow)'));
+  const ag=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:'10px'}});
+  awards.forEach(([icon,label,who,detail,color])=>{
+    const c=el('div',{class:'cardh',style:{padding:'13px 15px',borderLeft:'3px solid '+color}});
+    const top=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}});
+    top.appendChild(el('span',{style:{fontSize:'1rem'}},icon));
+    top.appendChild(el('span',{class:'bb',style:{fontSize:'.64rem',letterSpacing:'1px',color}},label.toUpperCase()));
+    c.appendChild(top);
+    c.appendChild(el('div',{style:{fontWeight:'600',fontSize:'.9rem',marginBottom:'2px',
+      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},who||'—'));
+    c.appendChild(el('div',{class:'mn',style:{fontSize:'.7rem',color:'var(--muted)'}},detail));
+    ag.appendChild(c);
+  });
+  wrap.appendChild(ag);
+
+  // ---- the games ---------------------------------------------------------
+  wrap.appendChild(makeSectionHeader('🏈 The Games','var(--accent)'));
+  games.forEach(g=>{
+    const wt=tMap[g.w.roster_id],lt=tMap[g.l.roster_id];
+    const tag=g.margin<5?['NAIL-BITER','var(--yellow)']:g.margin>=40?['BLOWOUT','var(--red)']:null;
+    const row=el('div',{class:'cardh',style:{padding:'13px 15px'}});
+    const line=el('div',{style:{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}});
+    line.appendChild(el('span',{style:{fontWeight:'600',flex:'1',minWidth:'120px',
+      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},wt?.name||'?'));
+    line.appendChild(el('span',{class:'bb',style:{color:'var(--green)'}},fmt(g.w.points,1)));
+    line.appendChild(el('span',{class:'mn',style:{color:'var(--muted)',fontSize:'.7rem'}},'def.'));
+    line.appendChild(el('span',{class:'bb',style:{color:'var(--muted)'}},fmt(g.l.points,1)));
+    line.appendChild(el('span',{style:{flex:'1',minWidth:'120px',color:'var(--muted)',
+      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},lt?.name||'?'));
+    if(tag)line.appendChild(el('span',{class:'mn',style:{fontSize:'.6rem',padding:'1px 6px',borderRadius:'4px',
+      color:tag[1],border:'1px solid '+tag[1]+'55'}},tag[0]));
+    row.appendChild(line);
+    wrap.appendChild(row);
+  });
+
+  // ---- next week ---------------------------------------------------------
+  // The preview uses the same shrunk strength and the same sigma the playoff
+  // simulator draws with, so the two tabs cannot disagree about who is better.
+  const nextRows=s.matchupsByWeek[week+1]||[];
+  const nextGames={}; nextRows.forEach(m=>{if(m.matchup_id!=null)(nextGames[m.matchup_id]||=[]).push(m.roster_id);});
+  const pairs=Object.values(nextGames).filter(p=>p.length===2);
+  if(pairs.length){
+    wrap.appendChild(makeSectionHeader('🔮 Week '+(week+1)+' Preview','var(--purple)'));
+    // Shrunk mean through this week — K=6.5 and sigma=22.26 from
+    // scripts/calibrate-playoffs.js.
+    const K=6.5,SIG=22.26;
+    const played={};
+    s.teams.forEach(t=>{played[t.rosterId]=[];});
+    for(let w=1;w<=week;w++)(s.matchupsByWeek[w]||[]).forEach(m=>{if(m.points>0&&played[m.roster_id])played[m.roster_id].push(m.points);});
+    const allPts=Object.values(played).flat();
+    const lm=allPts.length?allPts.reduce((a,b)=>a+b,0)/allPts.length:110;
+    const mu={};
+    Object.entries(played).forEach(([rid,arr])=>{
+      const k=arr.length,own=k?arr.reduce((a,b)=>a+b,0)/k:lm;
+      mu[rid]=k?(k/(k+K))*own+(1-k/(k+K))*lm:lm;
+    });
+    // P(A beats B) for two normals with the same spread.
+    const phi=(z)=>0.5*(1+erf(z/Math.SQRT2));
+    pairs.forEach(([a,b])=>{
+      const pa=phi((mu[a]-mu[b])/(SIG*Math.SQRT2));
+      const fav=pa>=0.5?a:b, dog=pa>=0.5?b:a, p=Math.max(pa,1-pa);
+      const row=el('div',{class:'cardh',style:{padding:'13px 15px'}});
+      const line=el('div',{style:{display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}});
+      line.appendChild(el('span',{style:{fontWeight:'600',flex:'1',minWidth:'110px',
+        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},tMap[fav]?.name||'?'));
+      line.appendChild(el('span',{class:'bb',style:{color:'var(--purple)'}},(p*100).toFixed(0)+'%'));
+      line.appendChild(el('span',{class:'mn',style:{color:'var(--muted)',fontSize:'.7rem'}},'vs'));
+      line.appendChild(el('span',{style:{flex:'1',minWidth:'110px',color:'var(--muted)',
+        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},tMap[dog]?.name||'?'));
+      line.appendChild(el('span',{class:'mn',style:{fontSize:'.68rem',color:'var(--muted)'}},
+        fmt(mu[fav],1)+' vs '+fmt(mu[dog],1)+' proj'));
+      row.appendChild(line);
+      wrap.appendChild(row);
+    });
+  }
+  promoteClickables(wrap);
+}
+
+// Abramowitz & Stegun 7.1.26. Accurate to 1.5e-7, which is six digits more than
+// a win probability rounded to a whole percent needs.
+function erf(x){
+  const sgn=x<0?-1:1;x=Math.abs(x);
+  const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429;
+  const t=1/(1+0.3275911*x);
+  const poly=((((a5*t+a4)*t+a3)*t+a2)*t+a1)*t;
+  return sgn*(1-poly*Math.exp(-x*x));
+}
+
 function renderTab(name){
   const c=$('tab-content');c.innerHTML='';
   const s=G.seasons[G.currentSeasonIdx];
-  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
+  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,week:renderWeekly,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
 
   // The trade tab cannot render before the values are in hand — without them
   // every player reads as unpriced, which is true but useless while a fetch is

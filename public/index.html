@@ -389,6 +389,7 @@ const TABS=[
   {id:'luck',label:'Luck Index'},
   {id:'matchups',label:'Matchups'},
   {id:'h2h',label:'Head-to-Head'},
+  {id:'playoffs',label:'🎯 Playoff Odds'},
   {id:'trade',label:'⚖️ Trade',cls:'trade'},
   {id:'myteam',label:'🏠 My Team',cls:'myteam'},
   {id:'recap',label:'🎬 Recap',cls:'recap'},
@@ -913,10 +914,130 @@ function setTab(name){
   }
   renderTab(name);
 }
+/* ═══════════════════════════════════════════════════════════════════════════
+   PLAYOFF ODDS
+
+   Ten thousand simulated seasons, played against the ACTUAL remaining schedule
+   — Sleeper publishes the pairings for weeks nobody has played, so a team's
+   remaining opponents are known rather than assumed. The arithmetic is in
+   lib/playoffs.js and runs on the server; see /api/playoffs.
+
+   THE CAVEAT IS RENDERED AS LOUDLY AS THE NUMBER. Backtested over four
+   completed seasons the model beats the base rate by 40%, and in week 1 it is
+   WORSE than the base rate — a percentage built on one game looks exactly as
+   authoritative as one built on ten, which is the whole danger. When the API
+   says it is not reliable this tab leads with that instead of the table.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderPlayoffs(s){
+  // EVERY OTHER TAB RETURNS AN ELEMENT and renderTab appends it. This one needs
+  // a fetch, so it returns the container immediately and fills it in later —
+  // making the function `async` would return a Promise to appendChild, which
+  // throws and leaves the tab blank.
+  const wrap=el('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}});
+  wrap.appendChild(makeSectionHeader('🎯 Playoff Odds','var(--accent)'));
+
+  const loading=el('div',{class:'cardh',style:{display:'flex',alignItems:'center',gap:'10px',padding:'18px'}});
+  loading.appendChild(el('div',{class:'spinner-sm'}));
+  loading.appendChild(el('span',{class:'mn',style:{fontSize:'.75rem',color:'var(--muted)'}},'Simulating 10,000 seasons…'));
+  wrap.appendChild(loading);
+
+  fillPlayoffs(wrap,loading,s);
+  return wrap;
+}
+
+async function fillPlayoffs(wrap,loading,s){
+  let d;
+  try{
+    const r=await fetch('/api/playoffs?league='+encodeURIComponent(s.leagueId));
+    d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.detail||d.error||('HTTP '+r.status));
+  }catch(e){
+    loading.remove();
+    // No odds is a state this page can show. A table of zeros is not.
+    const err=el('div',{class:'cardh',style:{padding:'18px',borderLeft:'3px solid var(--red)'}});
+    err.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'6px'}},'The odds could not be computed'));
+    err.appendChild(el('div',{class:'mn',style:{fontSize:'.72rem',color:'var(--muted)'}},String(e.message)));
+    wrap.appendChild(err);
+    return;
+  }
+  loading.remove();
+
+  if(d.note){
+    const warn=el('div',{class:'cardh',style:{padding:'14px 16px',marginBottom:'4px',
+      borderLeft:'3px solid '+(d.reliable?'var(--yellow)':'var(--red)'),
+      background:d.reliable?'rgba(234,179,8,.06)':'rgba(239,68,68,.06)'}});
+    warn.appendChild(el('div',{class:'bb',style:{fontSize:'.7rem',letterSpacing:'1px',
+      color:d.reliable?'var(--yellow)':'var(--red)',marginBottom:'6px'}},
+      d.reliable?'READ THESE LOOSELY':'NOT A FORECAST YET'));
+    warn.appendChild(el('div',{style:{fontSize:'.82rem',lineHeight:'1.5'}},d.note));
+    wrap.appendChild(warn);
+  }
+
+  const maxT=Math.max(...d.teams.map(t=>t.titleOdds),0.01);
+
+  d.teams.forEach((t,i)=>{
+    const inCut=i<d.playoffTeams;
+    const rc=inCut?'var(--green)':'var(--muted)';
+    const row=el('div',{class:'cardh team-row',style:{animationDelay:(i*.04)+'s'}});
+    const inner=el('div',{style:{display:'flex',alignItems:'center',gap:'14px'}});
+
+    const badge=el('div',{style:{width:'26px',height:'26px',borderRadius:'50%',display:'flex',
+      alignItems:'center',justifyContent:'center',background:rc+'22',border:'1px solid '+rc+'55',flexShrink:'0'}});
+    badge.appendChild(el('span',{class:'bb',style:{fontSize:'.8rem',color:rc}},String(i+1)));
+    inner.appendChild(badge);
+    inner.appendChild(makeAvatar(t.name,t.avatar));
+
+    const info=el('div',{style:{flex:'1',minWidth:'0'}});
+    const nr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'6px'}});
+    nr.appendChild(el('span',{style:{fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.name));
+    nr.appendChild(el('span',{class:'mn',style:{fontSize:'.65rem',color:'var(--muted)',flexShrink:'0'}},t.record));
+    info.appendChild(nr);
+
+    const bw=el('div',{style:{display:'flex',alignItems:'center',gap:'8px'}});
+    const bg=el('div',{style:{flex:'1',background:'var(--border)',borderRadius:'4px',height:'6px',overflow:'hidden'}});
+    bg.appendChild(el('div',{style:{width:(t.playoffOdds*100)+'%',height:'100%',
+      background:'linear-gradient(90deg,'+rc+','+rc+'88)',borderRadius:'4px',transition:'width 1s'}}));
+    bw.appendChild(bg);
+    bw.appendChild(el('span',{class:'bb',style:{fontSize:'.85rem',color:rc,whiteSpace:'nowrap',minWidth:'46px',textAlign:'right'}},
+      (t.playoffOdds*100).toFixed(t.playoffOdds>0&&t.playoffOdds<0.01?1:0)+'%'));
+    info.appendChild(bw);
+    inner.appendChild(info);
+
+    const pills=el('div',{class:'pills-row',style:{display:'flex',gap:'16px',flexShrink:'0',flexWrap:'wrap'}});
+    pills.appendChild(makePill('Proj W',t.projectedWins.toFixed(1),'var(--text)'));
+    pills.appendChild(makePill('Pts/wk',t.expectedScore.toFixed(1),'var(--muted)'));
+    pills.appendChild(makePill('Title',(t.titleOdds*100).toFixed(1)+'%',
+      t.titleOdds>=maxT*0.75?'var(--yellow)':'var(--muted)'));
+    inner.appendChild(pills);
+
+    row.appendChild(inner);
+    wrap.appendChild(row);
+  });
+
+  // WHERE THE NUMBERS CAME FROM, on the page rather than in a README nobody
+  // opens. The constants are fitted, the model is scored, and both are stated.
+  const foot=el('div',{class:'cardh',style:{padding:'14px 16px',marginTop:'6px'}});
+  foot.appendChild(el('div',{class:'bb',style:{fontSize:'.68rem',letterSpacing:'1px',color:'var(--accent)',marginBottom:'8px'}},'HOW THIS IS CALCULATED'));
+  const lines=[
+    '10,000 seasons simulated against the real remaining schedule ('+d.weeksLeft+' week'+(d.weeksLeft===1?'':'s')+' left, '+d.weeksPlayed+' played).',
+    'A team\u2019s weekly score is drawn around a shrunk estimate: its own average blended toward the league\u2019s '+d.leagueMean+' pts (from '+d.leagueMeanFrom+'). After 3 weeks its own scoring counts about a third.',
+    'Shrinkage K=6.5 and weekly spread \u03c3=22.3 are fitted over 520 team-splits from four completed seasons \u2014 not chosen.',
+    'Backtested on those seasons: Brier 0.144 against 0.240 for assuming everyone is 60% and 0.219 for reading today\u2019s standings.',
+    'Seeding and ties break on points-for, the way this league does.',
+  ];
+  lines.forEach(t=>{
+    const li=el('div',{style:{display:'flex',gap:'8px',marginBottom:'5px'}});
+    li.appendChild(el('span',{style:{color:'var(--accent)',flexShrink:'0'}},'\u2022'));
+    li.appendChild(el('span',{style:{fontSize:'.74rem',color:'var(--muted)',lineHeight:'1.5'}},t));
+    foot.appendChild(li);
+  });
+  wrap.appendChild(foot);
+}
+
 function renderTab(name){
   const c=$('tab-content');c.innerHTML='';
   const s=G.seasons[G.currentSeasonIdx];
-  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
+  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
 
   // The trade tab cannot render before the values are in hand — without them
   // every player reads as unpriced, which is true but useless while a fetch is

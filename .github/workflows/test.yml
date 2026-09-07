@@ -1,0 +1,39 @@
+name: Tests
+
+# THERE WAS NO CI HERE AT ALL. 96 tests that ran when somebody remembered to
+# type the command, which means they ran when somebody was already suspicious —
+# exactly the moment they are least needed.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read      # this job reads and never writes
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      # node --test is built in, so the suite costs nothing to run and needs no
+      # install step. The app's own deps are only needed for a build.
+      - name: Unit tests
+        run: node --test tests/*.test.js
+
+      - name: Every script parses
+        run: |
+          for f in lib/*.js scripts/*.js app/api/*/route.js middleware.js next.config.mjs; do
+            [ -f "$f" ] || continue
+            node --check "$f" 2>/dev/null || node -e "import('./$f')" || exit 1
+          done
+
+      # THE BUILD IS PART OF THE TEST. next.config.mjs decides how "/" is
+      # served, and a mistake there does not fail a single unit test — it just
+      # takes the front door off the site, which is how "/" spent months
+      # answering a redirect to nowhere.
+      - name: The app builds
+        run: npm ci --omit=optional && npm run build

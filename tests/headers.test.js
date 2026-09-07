@@ -51,3 +51,37 @@ test('the legacy XSS auditor stays off', () => {
   assert.match(SRC, /'X-XSS-Protection',\s*'0'/,
     "X-XSS-Protection must be '0' — the legacy auditor is a liability, not a defence");
 });
+
+test('the front door is served, not redirected', () => {
+  // "/" answered 307 with no Location and Next's error shell as the body for
+  // months. The hop was completed client-side, so browsers arrived and anything
+  // without JavaScript — a crawler, a link checker, curl — did not. Every
+  // manual test used /index.html directly and never touched the front door.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..');
+
+  assert.ok(!fs.existsSync(path.join(root, 'app', 'page.js')),
+    'app/page.js is back — a redirect at "/" is a hop the app does not need');
+
+  const cfg = fs.readFileSync(path.join(root, 'next.config.mjs'), 'utf8');
+  assert.match(cfg, /beforeFiles/,
+    'the "/" rewrite must be in beforeFiles: a plain array is checked AFTER pages, so any page at "/" would win');
+  assert.match(cfg, /source:\s*'\/'\s*,\s*destination:\s*'\/index\.html'/,
+    'nothing rewrites "/" to the app');
+});
+
+test('one place sets each header', () => {
+  // next.config.mjs was setting X-XSS-Protection to '1; mode=block' while
+  // middleware.js set it to '0' on purpose. Which one won came down to
+  // ordering, and the deliberate decision was the one at risk.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  // Comments stripped first: the file explains WHY the header lives in
+  // middleware, and a check that cannot tell an explanation from a setting
+  // would forbid documenting the decision.
+  const cfg = fs.readFileSync(path.join(__dirname, '..', 'next.config.mjs'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/X-XSS-Protection/i.test(cfg),
+    'next.config.mjs sets X-XSS-Protection as well as middleware.js — they disagreed once already');
+});

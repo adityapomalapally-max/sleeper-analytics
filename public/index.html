@@ -393,6 +393,7 @@ const TABS=[
   {id:'week',label:'📰 Weekly Report'},
   {id:'trade',label:'⚖️ Trade',cls:'trade'},
   {id:'finder',label:'🔍 Trade Finder',cls:'trade'},
+  {id:'draft',label:'🎓 Draft Grades'},
   {id:'myteam',label:'🏠 My Team',cls:'myteam'},
   {id:'recap',label:'🎬 Recap',cls:'recap'},
   {id:'whatif',label:'🔮 What-If',cls:'whatif'},
@@ -1338,10 +1339,123 @@ async function fillFinder(wrap,loading,s,forRoster){
   promoteClickables(wrap);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   DRAFT GRADES
+
+   A draft grade is the easiest number on a fantasy site to fake. This one is
+   value over what a pick at that slot actually returns, pooled across every
+   completed season in the league's history and forced to decrease — a curve
+   that says pick 70 beats pick 50 is reporting two late hits, not a fact.
+
+   AND IT DOES NOT PREDICT WINNING. Measured over 40 team-seasons the grade
+   correlates -0.045 with win rate, with the sign flapping year to year, and in
+   2025 the team that graded F went 13-1. That number is printed under the table
+   rather than buried, because a site that grades your draft and lets you think
+   it forecasts your season is selling something it has measured as worthless.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderDraft(s){
+  const wrap=el('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}});
+  wrap.appendChild(makeSectionHeader('🎓 Draft Grades','var(--purple)'));
+  const loading=el('div',{class:'cardh',style:{display:'flex',alignItems:'center',gap:'10px',padding:'18px'}});
+  loading.appendChild(el('div',{class:'spinner-sm'}));
+  loading.appendChild(el('span',{class:'mn',style:{fontSize:'.75rem',color:'var(--muted)'}},'Grading the draft…'));
+  wrap.appendChild(loading);
+  fillDraft(wrap,loading,s);
+  return wrap;
+}
+
+async function fillDraft(wrap,loading,s){
+  let d;
+  try{
+    const r=await fetch('/api/draft?league='+encodeURIComponent(s.leagueId));
+    d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.detail||d.error||('HTTP '+r.status));
+  }catch(e){
+    loading.remove();
+    const err=el('div',{class:'cardh',style:{padding:'18px',borderLeft:'3px solid var(--red)'}});
+    err.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'6px'}},'The draft could not be graded'));
+    err.appendChild(el('div',{class:'mn',style:{fontSize:'.72rem',color:'var(--muted)'}},String(e.message)));
+    wrap.appendChild(err);
+    return;
+  }
+  loading.remove();
+
+  const gradeColor=(l)=>l[0]==='A'?'var(--green)':l[0]==='B'?'var(--cyan)':l[0]==='C'?'var(--yellow)':'var(--red)';
+
+  if(d.mode==='market'){
+    const warn=el('div',{class:'cardh',style:{padding:'14px 16px',borderLeft:'3px solid var(--yellow)',background:'rgba(234,179,8,.06)'}});
+    warn.appendChild(el('div',{class:'bb',style:{fontSize:'.7rem',letterSpacing:'1px',color:'var(--yellow)',marginBottom:'6px'}},'NO FOOTBALL YET'));
+    warn.appendChild(el('div',{style:{fontSize:'.82rem',lineHeight:'1.5'}},d.note));
+    wrap.appendChild(warn);
+
+    d.teams.forEach((t,i)=>{
+      const row=el('div',{class:'cardh',style:{padding:'13px 15px'}});
+      const line=el('div',{style:{display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}});
+      line.appendChild(el('span',{class:'bb',style:{minWidth:'24px',color:'var(--muted)'}},String(i+1)));
+      line.appendChild(el('span',{style:{fontWeight:'600',flex:'1',minWidth:'140px',
+        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.name));
+      line.appendChild(el('span',{class:'bb',style:{color:t.surplus>=0?'var(--green)':'var(--red)'}},
+        (t.surplus>=0?'+':'')+t.surplus.toFixed(0)));
+      line.appendChild(el('span',{class:'mn',style:{fontSize:'.68rem',color:'var(--muted)'}},
+        'picks of value \u00b7 '+t.graded+' graded, '+t.skipped+' unpriced'));
+      if(t.best)line.appendChild(el('span',{class:'mn',style:{fontSize:'.68rem',color:'var(--green)'}},
+        'best: '+t.best.name+' (+'+t.best.surplus.toFixed(0)+')'));
+      row.appendChild(line);
+      wrap.appendChild(row);
+    });
+  } else {
+    d.teams.forEach(t=>{
+      const gc=gradeColor(t.letter);
+      const row=el('div',{class:'cardh',style:{padding:'13px 15px'}});
+      const line=el('div',{style:{display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}});
+      const badge=el('div',{style:{minWidth:'40px',height:'34px',borderRadius:'8px',display:'flex',alignItems:'center',
+        justifyContent:'center',background:gc+'22',border:'1px solid '+gc+'55',flexShrink:'0'}});
+      badge.appendChild(el('span',{class:'bb',style:{fontSize:'.95rem',color:gc}},t.letter));
+      line.appendChild(badge);
+      line.appendChild(el('span',{style:{fontWeight:'600',flex:'1',minWidth:'130px',
+        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.name));
+      line.appendChild(makePill('vs room',(t.relative>=0?'+':'')+t.relative,t.relative>=0?'var(--green)':'var(--red)'));
+      if(t.best)line.appendChild(makePill('steal',t.best.name.split(' ').slice(-1)[0]+' +'+t.best.surplus,'var(--green)'));
+      if(t.worst)line.appendChild(makePill('reach',t.worst.name.split(' ').slice(-1)[0]+' '+t.worst.surplus,'var(--red)'));
+      row.appendChild(line);
+      wrap.appendChild(row);
+    });
+
+    // THE PART THAT KEEPS THE GRADE HONEST.
+    const p=d.predictiveness;
+    const caution=el('div',{class:'cardh',style:{padding:'14px 16px',marginTop:'6px',borderLeft:'3px solid var(--yellow)'}});
+    caution.appendChild(el('div',{class:'bb',style:{fontSize:'.68rem',letterSpacing:'1px',color:'var(--yellow)',marginBottom:'8px'}},
+      'AND IT DOES NOT PREDICT YOUR SEASON'));
+    caution.appendChild(el('div',{style:{fontSize:'.8rem',lineHeight:'1.6',color:'var(--muted)'}},
+      'Measured across '+p.n+' team-seasons of this league, the draft grade correlates '+p.r+' with actual win rate '
+      +'\u2014 nothing, with the sign flipping year to year ('+Object.entries(p.bySeason).map(([y,v])=>y+' '+v).join(', ')+'). '
+      +'In a ten-team league with a deep waiver wire, the draft is one input among many and it washes out by November. '
+      +'Read this as what your draft returned, not as what your season will do.'));
+    wrap.appendChild(caution);
+
+    const foot=el('div',{class:'cardh',style:{padding:'14px 16px'}});
+    foot.appendChild(el('div',{class:'bb',style:{fontSize:'.68rem',letterSpacing:'1px',color:'var(--accent)',marginBottom:'8px'}},'HOW THIS IS CALCULATED'));
+    [
+      'A pick is graded against what a pick at that slot actually returns, pooled over '+d.seasonsPooled+' completed season'+(d.seasonsPooled===1?'':'s')+' of this league: '+d.curveSample.map(c=>'pick '+c.pick+' \u2248 '+c.expected).join(', ')+' points.',
+      'That curve is forced to decrease. Raw, the data claims pick 70 beats pick 50 \u2014 which is two late hits in a small sample, not a fact about drafting.',
+      '"vs room" is value against the other nine managers in this draft. The raw figure averaged '+d.leagueMeanGrade+' across the league, which is the season\u2019s scoring environment rather than anybody\u2019s drafting.',
+      'Production is points scored while rostered in this league. A player dropped in October and never picked up stops counting \u2014 it is the only per-player total the league API contains.',
+      'Keepers are excluded. A kept player is not a pick anybody made this year.',
+    ].forEach(x=>{
+      const li=el('div',{style:{display:'flex',gap:'8px',marginBottom:'5px'}});
+      li.appendChild(el('span',{style:{color:'var(--accent)',flexShrink:'0'}},'\u2022'));
+      li.appendChild(el('span',{style:{fontSize:'.74rem',color:'var(--muted)',lineHeight:'1.5'}},x));
+      foot.appendChild(li);
+    });
+    wrap.appendChild(foot);
+  }
+  promoteClickables(wrap);
+}
+
 function renderTab(name){
   const c=$('tab-content');c.innerHTML='';
   const s=G.seasons[G.currentSeasonIdx];
-  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,week:renderWeekly,finder:renderFinder,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
+  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,week:renderWeekly,finder:renderFinder,draft:renderDraft,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
 
   // The trade tab cannot render before the values are in hand — without them
   // every player reads as unpriced, which is true but useless while a fetch is

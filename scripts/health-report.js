@@ -212,8 +212,33 @@ function render() {
   return out.join('\n');
 }
 
+// The scorecard, as last written by scripts/score-claims.js. Read from disk
+// rather than recomputed: scoring pulls four seasons of weekly data and takes
+// minutes, which is a CI job, not a daily liveness check. What belongs here is
+// noticing that the last scoring found something.
+function checkClaims() {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const p = path.join(__dirname, '..', 'data', 'claims-score.json');
+  if (!fs.existsSync(p)) return warn('claims', 'no scorecard on disk — run scripts/score-claims.js --write');
+  let score;
+  try { score = JSON.parse(fs.readFileSync(p, 'utf8')); }
+  catch (e) { return fail('claims', `the scorecard is unreadable — ${e.message}`); }
+
+  const broken = (score.claims || []).filter(c => /^(FAILS|NOW)/.test(String(c.verdict)));
+  if (broken.length) {
+    return fail('claims', `${broken.length} published number(s) no longer mean what the pages say`,
+      broken.map(c => `${c.metric}: ${c.verdict} (measured ${c.value}, floor ${c.floor})`).join('\n'));
+  }
+  const age = (Date.now() - new Date(score.generated).getTime()) / 864e5;
+  if (age > 45) warn('claims', `the scorecard is ${Math.floor(age)} days old`);
+  else ok('claims', `all ${score.claims.length} published claims still hold (scored over ${score.teamSeasons} team-seasons)`);
+  return undefined;
+}
+
 async function main() {
   await checkPage();
+  checkClaims();
   await checkEndpoints();
   await checkAnswers();
   await checkValues();

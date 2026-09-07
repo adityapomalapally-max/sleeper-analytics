@@ -1,0 +1,73 @@
+{
+  "generated": "2026-09-07T03:43:49.385Z",
+  "seasons": 4,
+  "teamSeasons": 40,
+  "claims": [
+    {
+      "id": "playoff-odds",
+      "metric": "Playoff odds",
+      "about": "situation",
+      "test": "predicts",
+      "floor": 0.3,
+      "value": 0.41642055555555524,
+      "unit": "Brier skill over the base rate",
+      "verdict": "holds",
+      "published": "Playoff Odds tab"
+    },
+    {
+      "id": "all-play",
+      "metric": "All-play record (the power ranking)",
+      "about": "situation",
+      "test": "predicts",
+      "floor": 0.1,
+      "value": 0.3386059244448393,
+      "unit": "r, all-play now vs win rate after",
+      "verdict": "holds",
+      "published": "Power Rankings tab"
+    },
+    {
+      "id": "roster-quality",
+      "metric": "Roster quality (points the roster was worth)",
+      "about": "situation",
+      "test": "predicts",
+      "floor": 0.3,
+      "value": 0.49257701321129505,
+      "unit": "r, first half vs second-half wins",
+      "verdict": "holds",
+      "published": "Manager profile"
+    },
+    {
+      "id": "added-in-season",
+      "metric": "Added in-season — points started from players neither drafted nor kept",
+      "about": "person",
+      "test": "persists",
+      "floor": 0.5,
+      "value": 0.8948897210426834,
+      "unit": "r, first half vs second half (30 team-seasons with a previous roster)",
+      "verdict": "holds",
+      "published": "Manager profile"
+    },
+    {
+      "id": "lineup-efficiency",
+      "metric": "Lineup efficiency",
+      "about": "person",
+      "test": "persists",
+      "floor": null,
+      "value": -0.03586349110115325,
+      "unit": "r, first half vs second half",
+      "verdict": "as expected: not supported",
+      "published": "Manager profile, labelled"
+    },
+    {
+      "id": "draft-grade",
+      "metric": "Draft grade",
+      "about": "situation",
+      "test": "predicts",
+      "floor": null,
+      "value": null,
+      "unit": "r vs win rate — measured -0.045 in scripts/calibrate-draft.js",
+      "verdict": "as expected: not supported",
+      "published": "Draft Grades tab, with the number shown"
+    }
+  ]
+}

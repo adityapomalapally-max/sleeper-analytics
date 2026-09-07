@@ -31,6 +31,18 @@ jobs:
             node --check "$f" 2>/dev/null || node -e "import('./$f')" || exit 1
           done
 
+      # DO THE NUMBERS STILL MEAN WHAT THE PAGES SAY THEY MEAN? Unit tests check
+      # a number is computed as intended; nothing else here can tell you it is
+      # computed perfectly and means something else. Lineup efficiency
+      # correlates 0.450 with winning, passes every check, and persists at
+      # -0.036 — it describes the season, not the manager.
+      #
+      # lib/claims.js records what each published number claims, and this
+      # re-scores every claim against completed seasons. A number about a
+      # situation must predict; a number about a person must persist.
+      - name: The published numbers still mean what the pages say
+        run: node scripts/score-claims.js --strict
+
       # THE BUILD IS PART OF THE TEST. next.config.mjs decides how "/" is
       # served, and a mistake there does not fail a single unit test — it just
       # takes the front door off the site, which is how "/" spent months

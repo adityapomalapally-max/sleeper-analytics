@@ -394,6 +394,7 @@ const TABS=[
   {id:'trade',label:'⚖️ Trade',cls:'trade'},
   {id:'finder',label:'🔍 Trade Finder',cls:'trade'},
   {id:'draft',label:'🎓 Draft Grades'},
+  {id:'managers',label:'🧠 Managers'},
   {id:'myteam',label:'🏠 My Team',cls:'myteam'},
   {id:'recap',label:'🎬 Recap',cls:'recap'},
   {id:'whatif',label:'🔮 What-If',cls:'whatif'},
@@ -1455,10 +1456,151 @@ async function fillDraft(wrap,loading,s){
   promoteClickables(wrap);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   MANAGER PROFILES — the person, separated from the roster
+
+   ffwrapped's analytics guide names this and never defines it: "manager
+   performance vs. roster quality". Sleeper makes it computable because every
+   week carries starters AND bench.
+
+   THE OBVIOUS ANSWER IS THE WRONG ONE, and this page says so out loud. Lineup
+   efficiency — what you started over the best you could have — correlates 0.450
+   with winning and would make a lovely Manager Rating. It persists at -0.036: a
+   manager efficient in the first half of a season is no more likely to be
+   efficient in the second. There is no person in it.
+
+   What persists is what a manager ADDS in-season: 0.895 across the halves of a
+   season, one of the most stable things in the league. It correlates 0.021 with
+   winning. So it is published as an identity and never as a rating — this is
+   who you are, and it is not why you win.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderManagers(s){
+  const wrap=el('div',{style:{display:'flex',flexDirection:'column',gap:'10px'}});
+  wrap.appendChild(makeSectionHeader('🧠 Manager Profiles','var(--cyan)'));
+  const loading=el('div',{class:'cardh',style:{display:'flex',alignItems:'center',gap:'10px',padding:'18px'}});
+  loading.appendChild(el('div',{class:'spinner-sm'}));
+  loading.appendChild(el('span',{class:'mn',style:{fontSize:'.75rem',color:'var(--muted)'}},'Separating the manager from the roster…'));
+  wrap.appendChild(loading);
+  fillManagers(wrap,loading,s);
+  return wrap;
+}
+
+async function fillManagers(wrap,loading,s){
+  let d;
+  try{
+    const r=await fetch('/api/managers?league='+encodeURIComponent(s.leagueId));
+    d=await r.json();
+    if(!r.ok||d.error)throw new Error(d.detail||d.error||('HTTP '+r.status));
+  }catch(e){
+    loading.remove();
+    const err=el('div',{class:'cardh',style:{padding:'18px',borderLeft:'3px solid var(--red)'}});
+    err.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'6px'}},'Profiles could not be built'));
+    err.appendChild(el('div',{class:'mn',style:{fontSize:'.72rem',color:'var(--muted)'}},String(e.message)));
+    wrap.appendChild(err);
+    return;
+  }
+  loading.remove();
+
+  if(!d.managers||!d.managers.length){
+    const none=el('div',{class:'cardh',style:{padding:'16px',borderLeft:'3px solid var(--yellow)'}});
+    none.appendChild(el('div',{class:'bb',style:{fontSize:'.7rem',letterSpacing:'1px',color:'var(--yellow)',marginBottom:'6px'}},'NOTHING TO SEPARATE YET'));
+    none.appendChild(el('div',{style:{fontSize:'.82rem',lineHeight:'1.5'}},d.note||'No weeks have been played.'));
+    wrap.appendChild(none);
+    return;
+  }
+
+  if(!d.keepersKnown){
+    const warn=el('div',{class:'cardh',style:{padding:'13px 15px',borderLeft:'3px solid var(--yellow)'}});
+    warn.appendChild(el('div',{style:{fontSize:'.78rem',lineHeight:'1.5',color:'var(--muted)'}},
+      'This league has no previous season on record, so a kept player cannot be told from one that was added. '
+      + '\u201cAdded\u201d below therefore includes anyone not drafted this year.'));
+    wrap.appendChild(warn);
+  }
+
+  const info=el('div',{class:'info-box fu'});
+  info.innerHTML='<span style="color:var(--cyan);font-weight:600">Added</span> is points you started from players you neither drafted nor kept \u2014 '
+    +'the wire and the trade block. It is the one number here that describes the <em>person</em>: it repeats season-half to season-half at '
+    +'<strong>r&nbsp;=&nbsp;'+d.evidence.added.persists+'</strong>. It also correlates <strong>'+d.evidence.added.predicts+'</strong> with winning, which is nothing.';
+  wrap.appendChild(info);
+
+  const maxAdd=Math.max(...d.managers.map(m=>m.addedPerWeek),1);
+
+  d.managers.forEach((m,i)=>{
+    const row=el('div',{class:'cardh team-row',style:{animationDelay:(i*.04)+'s'}});
+    const inner=el('div',{style:{display:'flex',alignItems:'center',gap:'14px'}});
+    inner.appendChild(makeAvatar(m.name,m.avatar));
+
+    const info2=el('div',{style:{flex:'1',minWidth:'0'}});
+    const nr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px',flexWrap:'wrap'}});
+    nr.appendChild(el('span',{style:{fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.name));
+    nr.appendChild(el('span',{class:'mn',style:{fontSize:'.62rem',padding:'1px 7px',borderRadius:'4px',
+      background:'rgba(34,211,238,.13)',color:'var(--cyan)',border:'1px solid rgba(34,211,238,.3)'}},
+      m.identity.split(' — ')[0].toUpperCase()));
+    info2.appendChild(nr);
+    info2.appendChild(el('div',{style:{fontSize:'.75rem',color:'var(--muted)',marginBottom:'6px'}},
+      m.identity.split(' — ')[1]||''));
+
+    // Where the points actually came from — the whole point of the tab.
+    const bar=el('div',{style:{display:'flex',height:'7px',borderRadius:'4px',overflow:'hidden',background:'var(--border)'}});
+    const total=m.addedPerWeek+m.keptPerWeek+m.draftedPerWeek||1;
+    [[m.draftedPerWeek,'var(--accent)'],[m.keptPerWeek,'var(--purple)'],[m.addedPerWeek,'var(--cyan)']]
+      .forEach(([v,c])=>bar.appendChild(el('div',{style:{width:(100*v/total)+'%',background:c}})));
+    info2.appendChild(bar);
+    inner.appendChild(info2);
+
+    const pills=el('div',{class:'pills-row',style:{display:'flex',gap:'15px',flexShrink:'0',flexWrap:'wrap'}});
+    pills.appendChild(makePill('Added/wk',m.addedPerWeek.toFixed(1),'var(--cyan)'));
+    pills.appendChild(makePill('Kept',m.keptPerWeek.toFixed(1),'var(--purple)'));
+    pills.appendChild(makePill('Drafted',m.draftedPerWeek.toFixed(1),'var(--accent)'));
+    pills.appendChild(makePill('Left on bench',m.pointsLeftPerWeek.toFixed(1)+'/wk','var(--muted)'));
+    inner.appendChild(pills);
+    row.appendChild(inner);
+    wrap.appendChild(row);
+  });
+
+  // THE NUMBER PEOPLE EXPECT, WITH ITS DISQUALIFICATION ATTACHED. Leaving it
+  // out would just mean somebody computes it themselves and believes it.
+  const eff=el('div',{class:'cardh',style:{padding:'14px 16px',marginTop:'6px',borderLeft:'3px solid var(--yellow)'}});
+  eff.appendChild(el('div',{class:'bb',style:{fontSize:'.68rem',letterSpacing:'1px',color:'var(--yellow)',marginBottom:'8px'}},
+    'LINEUP EFFICIENCY IS NOT A MANAGER RATING'));
+  eff.appendChild(el('div',{style:{fontSize:'.8rem',lineHeight:'1.6',color:'var(--muted)',marginBottom:'10px'}},
+    'What you started over the best you could have started. It correlates '+d.evidence.efficiency.predicts
+    +' with winning, which is why every site prints it as a rating \u2014 and it repeats at '
+    +d.evidence.efficiency.persists+' from one half of a season to the next, which means there is no manager in it. '
+    +'It tracks winning because looking efficient and winning are the same weeks: your best players boom, so you win '
+    +'AND the lineup looks right in hindsight. Shown because you would work it out anyway.'));
+  const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:'8px'}});
+  [...d.managers].sort((a,b)=>b.efficiency-a.efficiency).forEach(m=>{
+    const c=el('div',{style:{display:'flex',justifyContent:'space-between',gap:'8px',fontSize:'.74rem'}});
+    c.appendChild(el('span',{style:{color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.name));
+    c.appendChild(el('span',{class:'mn',style:{color:'var(--muted)',flexShrink:'0'}},(m.efficiency*100).toFixed(1)+'%'));
+    grid.appendChild(c);
+  });
+  eff.appendChild(grid);
+  wrap.appendChild(eff);
+
+  const foot=el('div',{class:'cardh',style:{padding:'14px 16px'}});
+  foot.appendChild(el('div',{class:'bb',style:{fontSize:'.68rem',letterSpacing:'1px',color:'var(--accent)',marginBottom:'8px'}},'HOW THIS IS CALCULATED'));
+  [
+    'Every week carries starters and bench, so the best legal lineup available can be compared with the one that was played.',
+    'Started points are split three ways: drafted this year, kept from last season, and added in-season. A kept player never appears in the draft, so without last season\u2019s rosters a keeper reads as an acquisition \u2014 which is exactly the mistake the first version of this page made.',
+    'Two tests, over '+d.evidence.teamSeasons+' team-seasons: does it predict winning, and does it persist across the halves of a season. A number about a person has to persist; a number about a situation has to predict.',
+    'Added: predicts '+d.evidence.added.predicts+', persists '+d.evidence.added.persists+'. Kept: predicts '+d.evidence.kept.predicts+', persists '+d.evidence.kept.persists+'. Efficiency: predicts '+d.evidence.efficiency.predicts+', persists '+d.evidence.efficiency.persists+'.',
+    'These are re-scored continuously by scripts/score-claims.js. If one stops holding, this page is wrong and says so.',
+  ].forEach(x=>{
+    const li=el('div',{style:{display:'flex',gap:'8px',marginBottom:'5px'}});
+    li.appendChild(el('span',{style:{color:'var(--accent)',flexShrink:'0'}},'\u2022'));
+    li.appendChild(el('span',{style:{fontSize:'.74rem',color:'var(--muted)',lineHeight:'1.5'}},x));
+    foot.appendChild(li);
+  });
+  wrap.appendChild(foot);
+  promoteClickables(wrap);
+}
+
 function renderTab(name){
   const c=$('tab-content');c.innerHTML='';
   const s=G.seasons[G.currentSeasonIdx];
-  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,week:renderWeekly,finder:renderFinder,draft:renderDraft,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
+  const fn={standings:renderStandings,power:renderPower,scoring:renderScoring,luck:renderLuck,matchups:renderMatchups,h2h:renderH2H,playoffs:renderPlayoffs,week:renderWeekly,finder:renderFinder,draft:renderDraft,managers:renderManagers,trade:renderTrade,myteam:renderMyTeam,recap:renderRecap,whatif:renderWhatIf,history:renderHistory};
 
   // The trade tab cannot render before the values are in hand — without them
   // every player reads as unpriced, which is true but useless while a fetch is

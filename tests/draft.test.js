@@ -71,11 +71,26 @@ test('before any football, a pick with no published ADP is not graded', () => {
     { pick_no: 1, round: 1, roster_id: 1, player_id: 'known', metadata: { first_name: 'K', last_name: 'Nown' } },
     { pick_no: 2, round: 1, roster_id: 1, player_id: 'ghost', metadata: { first_name: 'G', last_name: 'Host' } },
   ];
-  const values = { known: { adp: 12, pos: 'RB' }, ghost: { adp: null, pos: 'WR' } };
+  const values = { known: { adp: 1, pos: 'RB' }, ghost: { adp: null, pos: 'WR' } };
   const rows = gradeAgainstMarket(picks, values, [{ rosterId: 1, name: 'A' }]);
   assert.strictEqual(rows[0].graded, 1);
   assert.strictEqual(rows[0].skipped, 1, 'a player with no ADP must be skipped, not scored as zero');
-  assert.strictEqual(rows[0].surplus, 11, 'taken at 1 with an ADP of 12 is eleven picks of value');
+  assert.strictEqual(rows[0].surplus, 0, 'taken at 1 with an ADP of 1 is exactly par');
+});
+
+test('a reach is not scored as a steal', () => {
+  // THE SIGN THAT WAS BACKWARDS. Value is getting a player LATER than the market
+  // does. Inverted, the biggest reaches in the draft came out as the best picks
+  // and one team's total reached +695.
+  const reach = [{ pick_no: 5, round: 1, roster_id: 1, player_id: 'x', metadata: { first_name: 'R', last_name: 'Each' } }];
+  const steal = [{ pick_no: 140, round: 12, roster_id: 1, player_id: 'x', metadata: { first_name: 'S', last_name: 'Teal' } }];
+  const v = { x: { adp: 70, pos: 'WR' } };
+  const asReach = gradeAgainstMarket(reach, v, [{ rosterId: 1, name: 'A' }])[0];
+  const asSteal = gradeAgainstMarket(steal, v, [{ rosterId: 1, name: 'A' }])[0];
+  assert.ok(asReach.surplus < 0, 'taking a pick-70 player at 5 is a reach, not value');
+  assert.ok(asSteal.surplus > 0, 'getting a pick-70 player at 140 is a steal');
+  assert.strictEqual(asReach.surplus, -65);
+  assert.strictEqual(asSteal.surplus, 70);
 });
 
 test('the letter is graded on the curve of this draft', () => {

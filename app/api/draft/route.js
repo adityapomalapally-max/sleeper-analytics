@@ -78,12 +78,14 @@ export async function GET(request) {
     // ---- before a ball is kicked: grade against the market ---------------
     if (prod.played === 0) {
       const vt = await valueTable();
-      const rows = gradeAgainstMarket(picks, vt.players, teams);
+      const rows = gradeAgainstMarket(picks, vt.players, teams, league.settings.num_teams || teams.length);
       return Response.json({
         mode: 'market', season: league.season, weeksPlayed: 0,
         note: 'Nothing has been played, so there is no production to grade. This is value against '
             + 'the draft market only: how far each pick fell past where it usually goes.',
         coverage: vt.coverage,
+        adpFormat: vt.format,
+        leagueMeanSurplus: rows.leagueMeanSurplus,
         teams: rows,
       }, { headers: { 'Cache-Control': 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600' } });
     }

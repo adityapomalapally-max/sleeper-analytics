@@ -1394,12 +1394,15 @@ async function fillDraft(wrap,loading,s){
       line.appendChild(el('span',{class:'bb',style:{minWidth:'24px',color:'var(--muted)'}},String(i+1)));
       line.appendChild(el('span',{style:{fontWeight:'600',flex:'1',minWidth:'140px',
         overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.name));
-      line.appendChild(el('span',{class:'bb',style:{color:t.surplus>=0?'var(--green)':'var(--red)'}},
-        (t.surplus>=0?'+':'')+t.surplus.toFixed(0)));
+      line.appendChild(el('span',{class:'bb',style:{color:t.relative>=0?'var(--green)':'var(--red)'}},
+        (t.relative>=0?'+':'')+t.relative.toFixed(0)));
       line.appendChild(el('span',{class:'mn',style:{fontSize:'.68rem',color:'var(--muted)'}},
-        'picks of value \u00b7 '+t.graded+' graded, '+t.skipped+' unpriced'));
-      if(t.best)line.appendChild(el('span',{class:'mn',style:{fontSize:'.68rem',color:'var(--green)'}},
-        'best: '+t.best.name+' (+'+t.best.surplus.toFixed(0)+')'));
+        'picks of value vs the room \u00b7 '+t.graded+' graded, '+t.skipped+' unpriced'));
+      // A NEGATIVE NUMBER DOES NOT NEED A PLUS IN FRONT OF IT. The first version
+      // printed "Jalen Nailor +-26" for a team whose best pick was still a reach.
+      const sgn=(v)=>(v>=0?'+':'')+v.toFixed(0);
+      if(t.best)line.appendChild(el('span',{class:'mn',style:{fontSize:'.68rem',color:t.best.surplus>=0?'var(--green)':'var(--muted)'}},
+        'best: '+t.best.name+' ('+sgn(t.best.surplus)+')'));
       row.appendChild(line);
       wrap.appendChild(row);
     });
